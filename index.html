@@ -660,7 +660,7 @@ function renderBots(){
     const memPct = bot.status==="running" && bot.memLimit ? Math.min(100, Math.round(bot.memMB/bot.memLimit*100)) : 0;
     tr.innerHTML = `
       <td><div class="bot-name"></div><div class="bot-file"></div></td>
-      <td>${badge(bot.status)}${bot.lastError && bot.status!=="running" ? `<div class="dim" style="margin-top:4px;max-width:220px">${esc(bot.lastError)}</div>`:""}</td>
+      <td>${badge(bot.status)}${bot.lastError && bot.status!=="running" ? `<div class="dim" style="margin-top:4px;max-width:220px">${esc(bot.lastError)}</div>`:""}${bot.missingModule ? `<div style="margin-top:5px;font-size:12.5px;color:var(--amber);font-weight:650">疑似缺库：${esc(bot.missingModule)}<br><span class="dim">对应 pip 包 ${esc(bot.missingPackage||bot.missingModule)} · 点 AI 优化处理</span></div>`:""}</td>
       <td class="dim">${bot.status==="running" ? (bot.manager==="systemd" ? "systemd · PID "+(bot.pid||"—") : "进程 · PID "+(bot.pid||"—")) : "—"}</td>
       <td><span class="num-cell">${bot.status==="running" ? bot.cpuPercent+"%" : "—"}</span><div class="mini-meter"><i style="width:${bot.status==="running"?Math.min(100,bot.cpuPercent):0}%"></i></div></td>
       <td><span class="num-cell">${bot.status==="running" ? bot.memMB+" MB" : "—"}</span><div class="mini-meter"><i style="width:${memPct}%"></i></div><div class="dim">上限 ${bot.memLimit} MB</div></td>
@@ -738,6 +738,7 @@ async function renderDrawer(id, silent=false){
     ["运行时长", fmtUptime(bot.uptimeSeconds)],
     ["累计启动", bot.totalStarts+" 次"],
     ["自动重启", bot.restartCount+" 次（"+(bot.autoRestart?"已开启":"未开启")+"）"],
+    ...(bot.missingModule ? [["缺库识别", bot.missingModule+" → pip install "+(bot.missingPackage||bot.missingModule)]] : []),
     ["文件大小", (bot.size/1024).toFixed(1)+" KB"],
     ["SHA-256", bot.sha256.slice(0,16)+"…"],
     ["登记时间", fmtTime(bot.createdAt)],

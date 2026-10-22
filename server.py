@@ -138,6 +138,10 @@ def init_db():
         cols = [r["name"] for r in c.execute("PRAGMA table_info(bots)").fetchall()]
         if "file_blob" not in cols:
             c.execute("ALTER TABLE bots ADD COLUMN file_blob BLOB")
+        if "missing_module" not in cols:
+            c.execute("ALTER TABLE bots ADD COLUMN missing_module TEXT")
+        if "missing_package" not in cols:
+            c.execute("ALTER TABLE bots ADD COLUMN missing_package TEXT")
 init_db()
 
 
@@ -604,8 +608,48 @@ def sync_bot_state(row):
     return row2, cpu_pct, rss
 
 
+MODULE_PACKAGE_MAP = {
+    "telebot": "pyTelegramBotAPI", "PIL": "Pillow", "cv2": "opencv-python",
+    "yaml": "PyYAML", "bs4": "beautifulsoup4", "dotenv": "python-dotenv",
+    "sklearn": "scikit-learn", "telegram": "python-telegram-bot",
+    "discord": "discord.py", "flask": "Flask", "requests": "requests",
+    "aiohttp": "aiohttp", "numpy": "numpy", "pandas": "pandas",
+    "openai": "openai", "anthropic": "anthropic", "redis": "redis",
+    "pymysql": "PyMySQL", "psycopg2": "psycopg2-binary", "sqlalchemy": "SQLAlchemy",
+    "lxml": "lxml", "Crypto": "pycryptodome", "jwt": "PyJWT",
+    "qrcode": "qrcode", "websocket": "websocket-client", "websockets": "websockets",
+}
+MISSING_RE = re.compile(r"(?:ModuleNotFoundError|ImportError): No module named '([A-Za-z0-9_\\.]+)'")
+
+
+def detect_missing_lib(row):
+    """从真实日志里识别缺库错误，返回 (module, package) 或 (None, None)。只识别、不安装。"""
+    try:
+        lines = read_logs(row, 80)
+    except Exception:
+        return None, None
+    found = None
+    for ln in lines:
+        m = MISSING_RE.search(ln)
+        if m:
+            found = m.group(1)
+    if not found:
+        return None, None
+    root = found.split(".")[0]
+    return root, MODULE_PACKAGE_MAP.get(root, root)
+
+
 def serialize_bot(row):
     row, cpu_pct, rss = sync_bot_state(row)
+    # 异常时自动识别缺库（只诊断展示，安装与否由点「AI 优化」后小梨审核处理）
+    if row["status"] == "error":
+        mod, pkg = detect_missing_lib(row)
+        if mod != row.get("missing_module"):
+            update_bot(row["id"], missing_module=mod, missing_package=pkg)
+            row = get_bot(row["id"]) or row
+    elif row.get("missing_module"):
+        update_bot(row["id"], missing_module=None, missing_package=None)
+        row = get_bot(row["id"]) or row
     up = None
     if row["status"] == "running" and row["started_at"]:
         up = int(time.time() - row["started_at"])
@@ -619,6 +663,7 @@ def serialize_bot(row):
         "cpuPercent": cpu_pct, "memMB": rss,
         "uptimeSeconds": up,
         "lastExitCode": row["last_exit_code"], "lastError": row["last_error"],
+        "missingModule": row.get("missing_module"), "missingPackage": row.get("missing_package"),
         "restartCount": row["restart_count"], "totalStarts": row["total_starts"],
         "createdAt": row["created_at"], "updatedAt": row["updated_at"],
     }
@@ -923,6 +968,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not row:
                     return self.send_json(404, {"error": "Bot 不存在"})
                 snap = (row["last_error"] or "")[:300]
+                if row.get("missing_module"):
+                    snap = (snap + f" | 疑似缺库: {row['missing_module']} -> pip install "
+                            f"{row.get('missing_package') or row['missing_module']}")[:300]
                 with DB_LOCK, db() as c:
                     dup = c.execute(
                         "SELECT id FROM optimize_requests WHERE bot_id=? AND status='pending'",
