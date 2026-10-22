@@ -1,0 +1,16 @@
+[Unit]
+Description=Liyuan Bot Host (梨园托管台后端)
+After=network.target
+
+[Service]
+Type=simple
+# 改成你的实际路径与用户
+WorkingDirectory=/opt/bot-hosting
+ExecStart=/usr/bin/python3 /opt/bot-hosting/server.py
+Environment=PORT=8080
+Environment=BOT_HOST_DATA=/opt/bot-hosting/data
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

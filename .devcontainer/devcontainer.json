@@ -1,0 +1,1 @@
+{"customizations":{"vscode":{"extensions":[]}},"forwardPorts":[8080],"image":"mcr.microsoft.com/devcontainers/python:3.12","name":"Liyuan Bot Host","portsAttributes":{"8080":{"label":"梨园托管台","onAutoForward":"openBrowser"}},"postStartCommand":"mkdir -p data && (nohup python3 server.py > /tmp/bot-host.log 2>&1 &) && sleep 1 && curl -s http://127.0.0.1:8080/api/health || true"}
