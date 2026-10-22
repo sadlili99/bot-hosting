@@ -120,6 +120,18 @@ def init_db():
             target TEXT,
             detail TEXT
         );
+        CREATE TABLE IF NOT EXISTS optimize_requests(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bot_id TEXT NOT NULL,
+            bot_name TEXT,
+            ts TEXT NOT NULL,
+            actor TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            error_snapshot TEXT,
+            result TEXT,
+            result_note TEXT,
+            resolved_at TEXT
+        );
         """)
         # 迁移：文件内容同时存一份到数据库 BLOB，磁盘文件丢失也能按库恢复，
         # 保证重新登录/后端重启后文件还在（数据一律保留，不清库）。
@@ -823,6 +835,11 @@ class Handler(BaseHTTPRequestHandler):
                 if self.command != "HEAD":
                     self.wfile.write(data)
                 return
+            if path == "/api/optimize-requests":
+                with DB_LOCK, db() as c:
+                    rows = [dict(r) for r in c.execute(
+                        "SELECT * FROM optimize_requests ORDER BY id DESC LIMIT 50").fetchall()]
+                return self.send_json(200, {"requests": rows})
             if path == "/api/audit":
                 limit = max(1, min(300, int(qs.get("limit", ["100"])[0])))
                 with DB_LOCK, db() as c:
@@ -899,6 +916,46 @@ class Handler(BaseHTTPRequestHandler):
                                       {"Set-Cookie": "bot_host_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"})
             if path == "/api/bots":
                 return self.create_bot(u)
+            m = re.fullmatch(r"/api/bots/([0-9a-f]+)/optimize-request", path)
+            if m:
+                bot_id = m.group(1)
+                row = get_bot(bot_id)
+                if not row:
+                    return self.send_json(404, {"error": "Bot 不存在"})
+                snap = (row["last_error"] or "")[:300]
+                with DB_LOCK, db() as c:
+                    dup = c.execute(
+                        "SELECT id FROM optimize_requests WHERE bot_id=? AND status='pending'",
+                        (bot_id,)).fetchone()
+                    if dup:
+                        return self.send_json(200, {"ok": True, "message": "已有待处理的优化请求，不用重复点", "requestId": dup["id"]})
+                    cur = c.execute(
+                        "INSERT INTO optimize_requests(bot_id,bot_name,ts,actor,status,error_snapshot)"
+                        " VALUES(?,?,?,?, 'pending', ?)",
+                        (bot_id, row["name"], now_iso(), u["username"], snap))
+                    rid = cur.lastrowid
+                audit(u["username"], "optimize_request", row["name"],
+                      f"request#{rid} status={row['status']} err={snap[:120]}")
+                return self.send_json(201, {"ok": True, "requestId": rid,
+                                             "message": "优化请求已提交，小梨会读取代码与日志后处理"})
+            m = re.fullmatch(r"/api/optimize-requests/(\d+)/resolve", path)
+            if m:
+                data = self.read_json()
+                result = data.get("result")
+                note = (data.get("note") or "")[:500]
+                if result not in ("done", "declined"):
+                    return self.send_json(400, {"error": "result 只能是 done 或 declined"})
+                with DB_LOCK, db() as c:
+                    r0 = c.execute("SELECT * FROM optimize_requests WHERE id=?",
+                                   (int(m.group(1)),)).fetchone()
+                    if not r0:
+                        return self.send_json(404, {"error": "请求不存在"})
+                    c.execute("UPDATE optimize_requests SET status='resolved', result=?, "
+                              "result_note=?, resolved_at=? WHERE id=?",
+                              (result, note, now_iso(), int(m.group(1))))
+                audit(u["username"], "optimize_resolve", r0["bot_name"],
+                      f"request#{m.group(1)} {result}: {note[:120]}")
+                return self.send_json(200, {"ok": True})
             m = re.fullmatch(r"/api/bots/([0-9a-f]+)/(start|stop|restart)", path)
             if m:
                 bot_id, act = m.group(1), m.group(2)
