@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>梨园托管台 · Bot 托管</title>
+<meta name="color-scheme" content="dark light">
+<style>
+/* ============ iOS 26 Liquid Glass · Bot 托管台（纯前端） ============ */
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+:root{
+  --blue:#0052D9; --blue2:#2b7fff;
+  --green:#00A870; --red:#E34D59; --amber:#ED7B2F;
+  --radius:26px;
+  --spring:cubic-bezier(.32,1.45,.44,1);
+  --ease:cubic-bezier(.22,.9,.28,1);
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Microsoft YaHei",sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+html[data-theme="dark"]{
+  --bg:#070b16;
+  --ink:#f2f5fa; --ink2:rgba(235,242,252,.62); --ink3:rgba(235,242,252,.38);
+  --glass:rgba(22,30,48,.52); --glass2:rgba(28,38,60,.38);
+  --stroke:rgba(255,255,255,.16); --stroke-soft:rgba(255,255,255,.08);
+  --spec:rgba(255,255,255,.55);
+  --shadow:0 24px 60px rgba(0,0,0,.45),0 4px 16px rgba(0,0,0,.35);
+  --field:rgba(255,255,255,.07);
+  --chip:rgba(255,255,255,.08);
+  --logbg:rgba(5,8,15,.55);
+  --blob-op:.85;
+}
+html[data-theme="light"]{
+  --bg:#eef2f8;
+  --ink:#111722; --ink2:rgba(17,23,34,.6); --ink3:rgba(17,23,34,.38);
+  --glass:rgba(255,255,255,.55); --glass2:rgba(255,255,255,.42);
+  --stroke:rgba(255,255,255,.75); --stroke-soft:rgba(20,30,50,.08);
+  --spec:rgba(255,255,255,.95);
+  --shadow:0 24px 55px rgba(60,90,140,.18),0 4px 14px rgba(60,90,140,.10);
+  --field:rgba(255,255,255,.55);
+  --chip:rgba(255,255,255,.5);
+  --logbg:rgba(255,255,255,.5);
+  --blob-op:.55;
+}
+html{scroll-behavior:smooth}
+body{
+  font-family:var(--font); background:var(--bg); color:var(--ink);
+  min-height:100vh; overflow-x:hidden;
+  transition:background .6s var(--ease), color .4s var(--ease);
+  touch-action:manipulation;
+}
+input,select,button{font-family:inherit;font-size:16px;color:inherit}
+::selection{background:rgba(0,82,217,.35)}
+
+/* ---- 动态壁纸：会漂移的光斑 + 指针视差 ---- */
+.wallpaper{position:fixed;inset:0;z-index:-2;overflow:hidden;background:
+  radial-gradient(120% 90% at 80% -10%, rgba(0,82,217,.28), transparent 55%),
+  radial-gradient(100% 80% at 0% 110%, rgba(0,168,112,.14), transparent 55%), var(--bg);
+  transition:background .6s var(--ease)}
+html[data-theme="light"] .wallpaper{background:
+  radial-gradient(120% 90% at 80% -10%, rgba(120,180,255,.5), transparent 55%),
+  radial-gradient(100% 80% at 0% 110%, rgba(140,230,200,.45), transparent 55%), var(--bg)}
+.blob{position:absolute;border-radius:50%;filter:blur(70px);opacity:var(--blob-op);will-change:transform}
+.b1{width:520px;height:520px;left:-120px;top:-140px;background:radial-gradient(circle at 35% 35%,#3d8bff,#0052D9 70%);animation:drift1 26s ease-in-out infinite alternate}
+.b2{width:420px;height:420px;right:-100px;top:22%;background:radial-gradient(circle at 40% 40%,#7c5cff,#3b2ea6 72%);animation:drift2 32s ease-in-out infinite alternate}
+.b3{width:360px;height:360px;left:38%;bottom:-180px;background:radial-gradient(circle at 40% 40%,#19c2a6,#00795f 72%);animation:drift3 38s ease-in-out infinite alternate}
+@keyframes drift1{to{transform:translate(90px,60px) scale(1.12)}}
+@keyframes drift2{to{transform:translate(-70px,90px) scale(.92)}}
+@keyframes drift3{to{transform:translate(-110px,-50px) scale(1.15)}}
+.grain{position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.5;
+  background-image:radial-gradient(rgba(255,255,255,.05) 1px,transparent 1px);background-size:3px 3px;mix-blend-mode:overlay}
+
+/* ---- 液态玻璃材质 ---- */
+.glass{
+  position:relative;
+  background:linear-gradient(135deg,var(--glass),var(--glass2));
+  -webkit-backdrop-filter:blur(26px) saturate(180%);backdrop-filter:blur(26px) saturate(180%);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow), inset 0 1px 0 0 var(--spec), inset 0 0 0 1px var(--stroke-soft);
+  transition:background .5s var(--ease), box-shadow .5s var(--ease);
+}
+.glass::before{ /* 顶部高光描边 + 边缘折射 */
+  content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;
+  padding:1px;
+  background:linear-gradient(160deg,var(--spec),transparent 32%,transparent 68%,var(--stroke));
+  -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+  -webkit-mask-composite:xor;mask-composite:exclude;opacity:.8;
+}
+
+/* ---- 顶栏 ---- */
+.topbar{position:sticky;top:14px;z-index:60;margin:14px auto 0;max-width:1240px;width:calc(100% - 28px);
+  display:flex;align-items:center;gap:14px;padding:12px 16px;border-radius:999px;
+  animation:drop .7s var(--spring) both}
+@keyframes drop{from{opacity:0;transform:translateY(-18px) scale(.98)}}
+.brand{display:flex;align-items:center;gap:11px;min-width:0}
+.logo{width:40px;height:40px;border-radius:13px;flex:none;display:grid;place-items:center;color:#fff;
+  background:linear-gradient(145deg,#2b7fff,#0052D9 60%,#003da3);
+  box-shadow:0 8px 20px rgba(0,82,217,.45), inset 0 1px 0 rgba(255,255,255,.5)}
+.brand h1{font-size:17px;font-weight:700;letter-spacing:.2px;white-space:nowrap}
+.brand p{font-size:11.5px;color:var(--ink2);white-space:nowrap}
+.top-right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.clock{font-family:var(--mono);font-size:13px;color:var(--ink2);padding:8px 12px;border-radius:999px;background:var(--field);box-shadow:inset 0 0 0 1px var(--stroke-soft);white-space:nowrap}
+.clock b{color:var(--ink);font-weight:600}
+
+/* 主题切换：深色 / 白天 / 跟随系统，滑块弹簧移动 */
+.theme-switch{display:flex;position:relative;background:var(--field);border-radius:999px;padding:3px;box-shadow:inset 0 0 0 1px var(--stroke-soft)}
+.theme-switch .thumb{position:absolute;top:3px;bottom:3px;border-radius:999px;
+  background:linear-gradient(180deg,var(--glass),var(--glass2));
+  box-shadow:0 4px 14px rgba(0,0,0,.25), inset 0 1px 0 var(--spec), inset 0 0 0 1px var(--stroke-soft);
+  transition:left .45s var(--spring), width .45s var(--spring)}
+.theme-switch button{position:relative;z-index:1;border:0;background:none;cursor:pointer;display:flex;align-items:center;gap:6px;
+  padding:7px 13px;border-radius:999px;font-size:13px;font-weight:600;color:var(--ink2);transition:color .3s,transform .18s var(--spring)}
+.theme-switch button:active{transform:scale(.93)}
+.theme-switch button.on{color:var(--ink)}
+.theme-switch svg{width:15px;height:15px}
+
+.btn{border:0;cursor:pointer;font-weight:600;border-radius:999px;display:inline-flex;align-items:center;gap:7px;
+  transition:transform .18s var(--spring), box-shadow .25s, background .25s, opacity .2s}
+.btn:active{transform:scale(.94)}
+.btn svg{width:16px;height:16px;flex:none}
+.btn-primary{background:linear-gradient(180deg,#2b7fff,#0052D9);color:#fff;padding:10px 18px;font-size:14px;
+  box-shadow:0 10px 24px rgba(0,82,217,.4), inset 0 1px 0 rgba(255,255,255,.45)}
+.btn-primary:hover{box-shadow:0 14px 30px rgba(0,82,217,.5), inset 0 1px 0 rgba(255,255,255,.45)}
+.btn-ghost{background:var(--chip);color:var(--ink);padding:9px 15px;font-size:13.5px;box-shadow:inset 0 0 0 1px var(--stroke-soft)}
+.btn-danger{background:rgba(227,77,89,.14);color:var(--red);padding:9px 15px;font-size:13.5px;box-shadow:inset 0 0 0 1px rgba(227,77,89,.25)}
+.btn[disabled]{opacity:.45;pointer-events:none}
+
+/* ---- 布局 ---- */
+.wrap{max-width:1240px;margin:0 auto;padding:22px 14px 90px;width:100%}
+.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:14px}
+.stat{padding:18px 18px 15px;overflow:hidden;cursor:default}
+.stat .lbl{font-size:12.5px;color:var(--ink2);display:flex;align-items:center;gap:6px}
+.stat .lbl svg{width:14px;height:14px}
+.stat .num{font-size:31px;font-weight:750;letter-spacing:-.5px;margin-top:7px;font-variant-numeric:tabular-nums;line-height:1}
+.stat .sub{font-size:12px;color:var(--ink3);margin-top:7px}
+.stat .sub em{font-style:normal;color:var(--green);font-weight:600}
+.rise{animation:rise .8s var(--spring) both;animation-delay:calc(var(--i)*70ms)}
+@keyframes rise{from{opacity:0;transform:translateY(22px) scale(.97)}}
+
+.main{display:grid;grid-template-columns:minmax(0,1fr) 372px;gap:14px;margin-top:14px;align-items:start}
+
+/* ---- 工具栏 ---- */
+.toolbar{padding:14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.search{flex:1 1 220px;display:flex;align-items:center;gap:9px;background:var(--field);border-radius:999px;padding:10px 15px;box-shadow:inset 0 0 0 1px var(--stroke-soft);transition:box-shadow .25s}
+.search:focus-within{box-shadow:inset 0 0 0 1.5px var(--blue2),0 0 0 4px rgba(0,82,217,.15)}
+.search svg{width:16px;height:16px;color:var(--ink3);flex:none}
+.search input{border:0;outline:0;background:none;flex:1;min-width:0}
+.search input::placeholder{color:var(--ink3)}
+.chips{display:flex;gap:7px;flex-wrap:wrap}
+.chip{border:0;cursor:pointer;padding:9px 15px;border-radius:999px;font-size:13.5px;font-weight:600;background:var(--chip);color:var(--ink2);box-shadow:inset 0 0 0 1px var(--stroke-soft);transition:all .25s var(--spring)}
+.chip:active{transform:scale(.93)}
+.chip.on{background:linear-gradient(180deg,#2b7fff,#0052D9);color:#fff;box-shadow:0 8px 18px rgba(0,82,217,.35)}
+
+/* ---- Bot 卡片 ---- */
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}
+.bot{padding:19px;cursor:pointer;overflow:hidden;
+  transition:transform .35s var(--spring), box-shadow .35s;
+  animation:rise .7s var(--spring) both;animation-delay:calc(var(--i)*60ms)}
+.bot:hover{transform:translateY(-3px)}
+.bot .specular{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;opacity:0;transition:opacity .3s;
+  background:radial-gradient(340px circle at var(--mx,50%) var(--my,50%),rgba(255,255,255,.16),transparent 65%)}
+.bot:hover .specular{opacity:1}
+.bot-top{display:flex;align-items:flex-start;gap:12px}
+.avatar{width:46px;height:46px;border-radius:15px;flex:none;display:grid;place-items:center;font-weight:700;font-size:17px;color:#fff;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.5),0 8px 18px rgba(0,0,0,.25)}
+.bot-name{font-size:16px;font-weight:700;line-height:1.25;word-break:break-all}
+.bot-file{font-family:var(--mono);font-size:12px;color:var(--ink2);margin-top:2px;word-break:break-all}
+.pill{margin-left:auto;flex:none;display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:650;
+  padding:6px 11px;border-radius:999px;background:var(--chip);box-shadow:inset 0 0 0 1px var(--stroke-soft)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--ink3);flex:none}
+.dot.run{background:var(--green);box-shadow:0 0 0 0 rgba(0,168,112,.5);animation:pulse 2s infinite}
+.dot.err{background:var(--red);box-shadow:0 0 0 0 rgba(227,77,89,.5);animation:pulse 1.4s infinite}
+@keyframes pulse{70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
+.metrics{margin-top:16px;display:grid;gap:11px}
+.metric{display:grid;grid-template-columns:44px 1fr 62px;align-items:center;gap:10px;font-size:12.5px;color:var(--ink2)}
+.metric b{color:var(--ink);font-weight:650;text-align:right;font-variant-numeric:tabular-nums}
+.bar{height:7px;border-radius:99px;background:var(--field);overflow:hidden;box-shadow:inset 0 1px 2px rgba(0,0,0,.18)}
+.bar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#2b7fff,#0052D9);transition:width .9s var(--spring)}
+.bar i.hot{background:linear-gradient(90deg,#ffb03a,#ED7B2F)}
+.bar i.crit{background:linear-gradient(90deg,#ff7a72,#E34D59)}
+.bot-meta{display:flex;gap:14px;flex-wrap:wrap;margin-top:14px;font-size:12.5px;color:var(--ink2)}
+.bot-meta b{color:var(--ink);font-weight:650;font-variant-numeric:tabular-nums}
+.spark{position:absolute;right:14px;bottom:52px;opacity:.85;pointer-events:none}
+.bot-actions{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+.bot-actions .btn{padding:8px 14px;font-size:13px}
+.switch{position:relative;width:50px;height:30px;flex:none;border:0;cursor:pointer;border-radius:999px;background:var(--field);
+  box-shadow:inset 0 0 0 1px var(--stroke-soft), inset 0 2px 5px rgba(0,0,0,.2);transition:background .3s}
+.switch::after{content:"";position:absolute;top:2.5px;left:3px;width:25px;height:25px;border-radius:50%;
+  background:linear-gradient(180deg,#fff,#e8edf4);box-shadow:0 3px 8px rgba(0,0,0,.3), inset 0 1px 0 #fff;
+  transition:transform .38s var(--spring)}
+.switch.on{background:linear-gradient(180deg,#12c37e,#00A870)}
+.switch.on::after{transform:translateX(19px)}
+.switch:active::after{width:30px}
+.switch.on:active::after{transform:translateX(14px)}
+.progress-line{height:3px;border-radius:99px;margin-top:14px;overflow:hidden;background:var(--field);display:none}
+.progress-line.show{display:block}
+.progress-line i{display:block;height:100%;width:40%;border-radius:99px;background:var(--blue2);animation:slide 1s ease-in-out infinite alternate}
+@keyframes slide{from{transform:translateX(-30%)}to{transform:translateX(190%)}}
+.empty{padding:52px 20px;text-align:center;color:var(--ink2);font-size:14px;display:none}
+.empty.show{display:block;animation:rise .5s var(--spring) both}
+
+/* ---- 日志面板 ---- */
+.logpanel{padding:18px;position:sticky;top:92px}
+.logpanel header{display:flex;align-items:center;gap:8px}
+.logpanel h2{font-size:15.5px;font-weight:700}
+.live-dot{width:8px;height:8px;border-radius:50%;background:var(--red);animation:pulse 1.6s infinite;box-shadow:0 0 0 0 rgba(227,77,89,.5)}
+.log-tools{margin-left:auto;display:flex;gap:6px}
+.icon-btn{width:32px;height:32px;border:0;border-radius:10px;cursor:pointer;display:grid;place-items:center;background:var(--chip);color:var(--ink2);box-shadow:inset 0 0 0 1px var(--stroke-soft);transition:transform .18s var(--spring),color .2s}
+.icon-btn:active{transform:scale(.88)}
+.icon-btn svg{width:15px;height:15px}
+.icon-btn.on{color:var(--blue2)}
+.logbox{margin-top:13px;border-radius:18px;background:var(--logbg);box-shadow:inset 0 0 0 1px var(--stroke-soft);
+  height:430px;overflow-y:auto;padding:13px 14px;font-family:var(--mono);font-size:12px;line-height:1.85;scroll-behavior:smooth}
+.logbox::-webkit-scrollbar{width:5px}.logbox::-webkit-scrollbar-thumb{background:var(--stroke);border-radius:99px}
+.log-line{animation:login .35s var(--ease) both;word-break:break-all}
+@keyframes login{from{opacity:0;transform:translateY(4px)}}
+.log-line .t{color:var(--ink3)}
+.log-line .lv{font-weight:700}
+.lv.info{color:#4da3ff}.lv.ok{color:#2fce96}.lv.warn{color:#ffb03a}.lv.err{color:#ff7a72}
+.log-line .bn{color:var(--ink2)}
+
+/* ---- 弹窗 / 抽屉 ---- */
+.mask{position:fixed;inset:0;z-index:90;background:rgba(4,8,16,.45);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+  opacity:0;pointer-events:none;transition:opacity .35s}
+.mask.show{opacity:1;pointer-events:auto}
+.modal{position:fixed;z-index:95;left:50%;top:50%;width:min(560px,calc(100% - 28px));max-height:88vh;overflow-y:auto;
+  transform:translate(-50%,-46%) scale(.94);opacity:0;pointer-events:none;transition:all .45s var(--spring);padding:24px}
+.modal.show{transform:translate(-50%,-50%) scale(1);opacity:1;pointer-events:auto}
+.modal h2{font-size:19px;font-weight:750}
+.modal .sub{font-size:13px;color:var(--ink2);margin-top:5px;line-height:1.6}
+.dropzone{margin-top:18px;border:1.6px dashed var(--stroke);border-radius:20px;padding:30px 18px;text-align:center;cursor:pointer;
+  transition:all .25s;background:var(--field)}
+.dropzone:hover,.dropzone.over{border-color:var(--blue2);background:rgba(0,82,217,.1);transform:scale(1.01)}
+.dropzone svg{width:34px;height:34px;color:var(--blue2)}
+.dropzone p{font-size:14px;font-weight:600;margin-top:9px}
+.dropzone span{font-size:12.5px;color:var(--ink2)}
+.field{margin-top:15px}
+.field label{display:block;font-size:13px;font-weight:600;color:var(--ink2);margin-bottom:7px}
+.field input,.field select{width:100%;border:0;outline:0;background:var(--field);border-radius:14px;padding:12px 14px;box-shadow:inset 0 0 0 1px var(--stroke-soft);transition:box-shadow .25s}
+.field input:focus,.field select:focus{box-shadow:inset 0 0 0 1.5px var(--blue2),0 0 0 4px rgba(0,82,217,.14)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.scan{margin-top:16px;display:none}
+.scan.show{display:block;animation:rise .5s var(--spring) both}
+.scan h3{font-size:13.5px;font-weight:700;margin-bottom:9px;display:flex;gap:7px;align-items:center}
+.scan-item{display:flex;gap:9px;font-size:12.5px;line-height:1.55;padding:9px 12px;border-radius:12px;background:var(--field);margin-bottom:7px;box-shadow:inset 0 0 0 1px var(--stroke-soft)}
+.scan-item code{font-family:var(--mono);font-size:11.5px}
+.sev{flex:none;font-weight:700;font-size:11px;padding:2.5px 8px;border-radius:99px;height:fit-content}
+.sev.high{background:rgba(227,77,89,.16);color:var(--red)}
+.sev.mid{background:rgba(237,123,47,.16);color:var(--amber)}
+.sev.ok{background:rgba(0,168,112,.16);color:var(--green)}
+.checkline{display:none;gap:9px;align-items:flex-start;font-size:13px;line-height:1.55;margin-top:13px;cursor:pointer}
+.checkline.show{display:flex}
+.checkline input{width:18px;height:18px;margin-top:1px;accent-color:var(--blue)}
+.modal-actions{display:flex;gap:9px;margin-top:22px;justify-content:flex-end}
+.drawer{position:fixed;z-index:95;top:0;right:0;height:100dvh;width:min(430px,94vw);border-radius:28px 0 0 28px;
+  transform:translateX(106%);transition:transform .55s var(--spring);padding:24px 22px;overflow-y:auto}
+.drawer.show{transform:none}
+.drawer h2{font-size:18px;font-weight:750;word-break:break-all}
+.drawer .logbox{height:300px}
+.kv{display:grid;grid-template-columns:86px 1fr;row-gap:10px;font-size:13.5px;margin:16px 0}
+.kv dt{color:var(--ink2)} .kv dd{font-weight:600;font-variant-numeric:tabular-nums;word-break:break-all}
+
+/* ---- Toast ---- */
+.toasts{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:120;display:flex;flex-direction:column;gap:9px;align-items:center;pointer-events:none;width:max-content;max-width:calc(100% - 28px)}
+.toast{display:flex;align-items:center;gap:9px;padding:12px 19px;border-radius:999px;font-size:14px;font-weight:600;
+  animation:toastin .5s var(--spring) both;max-width:100%}
+.toast.out{animation:toastout .35s var(--ease) both}
+@keyframes toastin{from{opacity:0;transform:translateY(18px) scale(.92)}}
+@keyframes toastout{to{opacity:0;transform:translateY(10px) scale(.94)}}
+.toast svg{width:16px;height:16px;flex:none}
+.toast.ok svg{color:var(--green)} .toast.err svg{color:var(--red)} .toast.info svg{color:var(--blue2)}
+
+.foot{margin-top:26px;text-align:center;font-size:12.5px;color:var(--ink3);line-height:1.8}
+.foot code{font-family:var(--mono)}
+
+@media(max-width:1020px){
+  .stats{grid-template-columns:repeat(3,1fr)}
+  .main{grid-template-columns:1fr}
+  .logpanel{position:static}
+  .logbox{height:320px}
+}
+@media(max-width:640px){
+  .stats{grid-template-columns:repeat(2,1fr)}
+  .grid{grid-template-columns:1fr}
+  .clock{display:none}
+  .brand p{display:none}
+  .theme-switch button span{display:none}
+  .theme-switch button{padding:7px 10px}
+  .topbar{border-radius:26px;flex-wrap:wrap}
+  .two{grid-template-columns:1fr}
+}
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}
+}
+</style>
+</head>
+<body>
+<div class="wallpaper" id="wallpaper">
+  <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
+</div>
+<div class="grain"></div>
+
+<!-- 顶栏 -->
+<header class="topbar glass">
+  <div class="brand">
+    <div class="logo">
+      <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="3" y="4" width="18" height="13" rx="3"/><path d="M8 21h8M12 17v4M7.5 9.5l2.5 2-2.5 2M13 13.5h4"/></svg>
+    </div>
+    <div><h1>梨园托管台</h1><p>Bot 运行与托管</p></div>
+  </div>
+  <div class="top-right">
+    <div class="clock" title="北京时间"><b id="clockTime">--:--:--</b> · 北京时间</div>
+    <div class="theme-switch" id="themeSwitch" role="group" aria-label="主题切换">
+      <div class="thumb" id="themeThumb"></div>
+      <button data-theme-mode="dark" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 13.5A8.5 8.5 0 1 1 10.5 4a7 7 0 0 0 9.5 9.5Z"/></svg><span>深色</span></button>
+      <button data-theme-mode="light"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8"/></svg><span>白天</span></button>
+      <button data-theme-mode="auto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18Z" fill="currentColor" stroke="none"/></svg><span>跟随系统</span></button>
+    </div>
+    <button class="btn btn-primary" id="openAdd">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      添加 Bot
+    </button>
+  </div>
+</header>
+
+<div class="wrap">
+  <!-- 仪表盘 -->
+  <section class="stats" id="stats">
+    <div class="stat glass rise" style="--i:0">
+      <div class="lbl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="13" rx="3"/><path d="M8 21h8M12 17v4"/></svg>托管总数</div>
+      <div class="num" id="stTotal">0</div><div class="sub">台机器 · <em>全部在线巡检</em></div>
+    </div>
+    <div class="stat glass rise" style="--i:1">
+      <div class="lbl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12.5a10 10 0 0 1 14 0M8.5 16a5.5 5.5 0 0 1 7 0"/><circle cx="12" cy="19.4" r="1.3" fill="currentColor"/></svg>运行中</div>
+      <div class="num" id="stRunning">0</div><div class="sub" id="stRunningSub">进程守护正常</div>
+    </div>
+    <div class="stat glass rise" style="--i:2">
+      <div class="lbl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a8 8 0 0 1-8 8H4l2-3a8 8 0 1 1 15-5Z"/></svg>今日消息处理</div>
+      <div class="num" id="stMsgs">0</div><div class="sub">实时累计 · <em>每秒更新</em></div>
+    </div>
+    <div class="stat glass rise" style="--i:3">
+      <div class="lbl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M13 2 4.5 13.5H11L9.5 22 19 10h-6.5L13 2Z"/></svg>平均响应</div>
+      <div class="num"><span id="stResp">0</span><small style="font-size:16px;color:var(--ink2)"> ms</small></div><div class="sub">近 5 分钟采样</div>
+    </div>
+    <div class="stat glass rise" style="--i:4">
+      <div class="lbl"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 4v5h-5"/></svg>异常重启</div>
+      <div class="num" id="stRestarts">0</div><div class="sub">今日 · 崩溃自动拉起</div>
+    </div>
+  </section>
+
+  <div class="main">
+    <div>
+      <!-- 工具栏 -->
+      <section class="toolbar glass rise" style="--i:5">
+        <label class="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/></svg>
+          <input id="searchInput" type="text" placeholder="搜 bot 名称或文件名…" autocomplete="off">
+        </label>
+        <div class="chips" id="filterChips">
+          <button class="chip on" data-filter="all">全部</button>
+          <button class="chip" data-filter="running">运行中</button>
+          <button class="chip" data-filter="stopped">已停止</button>
+          <button class="chip" data-filter="error">异常</button>
+        </div>
+      </section>
+
+      <!-- Bot 网格 -->
+      <section class="grid" id="botGrid"></section>
+      <div class="empty glass" id="emptyState">没有符合条件的 Bot。换个关键词，或点右上角「添加 Bot」上传一个 .py 文件。</div>
+    </div>
+
+    <!-- 实时日志 -->
+    <aside class="logpanel glass rise" style="--i:6">
+      <header>
+        <span class="live-dot"></span><h2>实时日志</h2>
+        <div class="log-tools">
+          <button class="icon-btn on" id="logPause" title="暂停 / 继续滚动">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 5v14M15 5v14"/></svg>
+          </button>
+          <button class="icon-btn" id="logClear" title="清空日志">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m3 0-1 13a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 7"/></svg>
+          </button>
+        </div>
+      </header>
+      <div class="logbox" id="logBox"></div>
+      <p style="margin-top:11px;font-size:12px;color:var(--ink3);line-height:1.6">点任意 Bot 卡片可看它自己的日志与详情。前端版日志为本地模拟流，接后端后换成 WebSocket 即可。</p>
+    </aside>
+  </div>
+
+  <p class="foot">梨园托管台 · 纯前端版（数据保存在本机浏览器，接后端时把 <code>API</code> 层换成真实接口即可）<br>托管方式约定：每个 Bot 一个独立系统服务，崩溃自动拉起、资源限额、进程隔离。</p>
+</div>
+
+<!-- 添加 Bot 弹窗 -->
+<div class="mask" id="mask"></div>
+<section class="modal glass" id="addModal" aria-hidden="true">
+  <h2>添加 Bot</h2>
+  <p class="sub">上传 .py 文件登记托管。文件只在本机浏览器里做静态安全扫描，不会上传到任何地方；命中危险调用要勾选确认才放行。</p>
+  <div class="dropzone" id="dropzone">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 16V5m0 0 4 4m-4-4L8 9"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+    <p id="dzTitle">把 .py 文件拖到这里，或点这里选文件</p>
+    <span id="dzSub">只接受 .py · 扫描项：删文件 / 读凭证 / 外传数据 / 任意命令执行</span>
+    <input type="file" id="fileInput" accept=".py" hidden>
+  </div>
+  <div class="two">
+    <div class="field"><label for="botName">Bot 名称</label><input id="botName" type="text" placeholder="例如：天气推送"></div>
+    <div class="field"><label for="botFile">文件名</label><input id="botFile" type="text" placeholder="weather_push.py"></div>
+  </div>
+  <div class="two">
+    <div class="field"><label for="cpuLimit">CPU 上限</label>
+      <select id="cpuLimit"><option>25%</option><option selected>50%</option><option>100%</option><option>200%</option></select></div>
+    <div class="field"><label for="memLimit">内存上限</label>
+      <select id="memLimit"><option>128 MB</option><option selected>256 MB</option><option>512 MB</option><option>1 GB</option></select></div>
+  </div>
+  <div class="scan" id="scanBox">
+    <h3><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3 4 6v6c0 4.5 3.4 7.7 8 9 4.6-1.3 8-4.5 8-9V6l-8-3Z"/><path d="m9 12 2 2 4-4"/></svg>安全扫描结果</h3>
+    <div id="scanList"></div>
+  </div>
+  <label class="checkline" id="riskCheckLine">
+    <input type="checkbox" id="riskCheck">
+    <span>我已看过上面的风险项，确认这个文件是我自己的代码，同意登记托管。</span>
+  </label>
+  <div class="modal-actions">
+    <button class="btn btn-ghost" id="cancelAdd">取消</button>
+    <button class="btn btn-primary" id="confirmAdd" disabled>登记托管</button>
+  </div>
+</section>
+
+<!-- 删除确认 -->
+<section class="modal glass" id="delModal" aria-hidden="true" style="width:min(420px,calc(100% - 28px))">
+  <h2>删除这个 Bot？</h2>
+  <p class="sub" id="delText">将停止进程并移除托管登记，日志一并清掉。这个操作在前端版里可以刷新页面恢复，接后端后不可恢复。</p>
+  <div class="modal-actions">
+    <button class="btn btn-ghost" id="cancelDel">留着</button>
+    <button class="btn btn-danger" id="confirmDel" style="background:linear-gradient(180deg,#ff7a72,#E34D59);color:#fff">确认删除</button>
+  </div>
+</section>
+
+<!-- 详情抽屉 -->
+<aside class="drawer glass" id="drawer" aria-hidden="true">
+  <div style="display:flex;align-items:flex-start;gap:10px">
+    <div><h2 id="dName">—</h2><p style="font-family:var(--mono);font-size:12.5px;color:var(--ink2);margin-top:3px" id="dFile">—</p></div>
+    <button class="icon-btn" id="closeDrawer" style="margin-left:auto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <dl class="kv">
+    <dt>状态</dt><dd id="dStatus">—</dd>
+    <dt>运行时长</dt><dd id="dUptime">—</dd>
+    <dt>CPU / 内存</dt><dd id="dMetrics">—</dd>
+    <dt>资源限额</dt><dd id="dLimits">—</dd>
+    <dt>今日消息</dt><dd id="dMsgs">—</dd>
+    <dt>异常重启</dt><dd id="dRestarts">—</dd>
+  </dl>
+  <div style="display:flex;gap:8px;flex-wrap:wrap" id="dActions"></div>
+  <h3 style="font-size:14px;font-weight:700;margin:20px 0 10px">该 Bot 的日志</h3>
+  <div class="logbox" id="dLogBox"></div>
+</aside>
+
+<div class="toasts" id="toasts"></div>
+
+<script>
+"use strict";
+/* ================= 数据层（接后端时只换这里） ================= */
+const API = {
+  // 前端版：全部走本地状态。接后端后把下列方法换成 fetch('/api/...') 即可，UI 不用改。
+  async list(){ return structuredClone(DB.bots); },
+};
+const AVATAR_COLORS = [
+  ["#2b7fff","#0052D9"],["#12c37e","#00795f"],["#ffb03a","#d96a00"],["#ff7a72","#c62f3b"],
+  ["#9a7bff","#5a3fd4"],["#37c8e8","#0b7ea4"],["#f279b8","#b52b78"],["#8b98ab","#55606f"]
+];
+let seedBots = [
+  {id:"b1", name:"微信 AI 回复", file:"ai_reply.py", status:"running", cpu:18, mem:142, memLimit:"256 MB", cpuLimit:"50%", startedAt:Date.now()-1000*60*60*7-1000*60*24, msgs:1284, restarts:0, spark:[]},
+  {id:"b2", name:"卡网看门狗", file:"cardnet_watchdog.py", status:"running", cpu:6, mem:58, memLimit:"128 MB", cpuLimit:"25%", startedAt:Date.now()-1000*60*60*26-1000*60*11, msgs:342, restarts:1, spark:[]},
+  {id:"b3", name:"表白墙审核", file:"confession_moderator.py", status:"running", cpu:23, mem:186, memLimit:"256 MB", cpuLimit:"50%", startedAt:Date.now()-1000*60*60*3-1000*60*41, msgs:567, restarts:0, spark:[]},
+  {id:"b4", name:"天气推送", file:"weather_push.py", status:"stopped", cpu:0, mem:0, memLimit:"256 MB", cpuLimit:"50%", startedAt:0, msgs:89, restarts:0, spark:[]},
+  {id:"b5", name:"GitHub 同步", file:"github_sync.py", status:"running", cpu:11, mem:97, memLimit:"512 MB", cpuLimit:"100%", startedAt:Date.now()-1000*60*60*11-1000*60*3, msgs:203, restarts:2, spark:[]},
+  {id:"b6", name:"旧版 QQ 通知", file:"qq_notify.py", status:"error", cpu:0, mem:0, memLimit:"128 MB", cpuLimit:"25%", startedAt:0, msgs:12, restarts:5, spark:[]},
+];
+let DB = { bots: seedBots };
+try{
+  const saved = JSON.parse(localStorage.getItem("liyuan-bots-v1")||"null");
+  if(saved && Array.isArray(saved.bots) && saved.bots.length){ DB = saved; DB.bots.forEach(b=>{ if(b.status==="running" && !b.startedAt) b.startedAt = Date.now()-3600e3; b.spark=[]; }); }
+}catch(e){}
+function persist(){ try{ localStorage.setItem("liyuan-bots-v1", JSON.stringify({bots: DB.bots.map(({spark, ...rest})=>rest)})); }catch(e){} }
+
+/* ================= 工具 ================= */
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const fmt = n => n.toLocaleString("zh-CN");
+function uptimeText(bot){
+  if(bot.status!=="running" || !bot.startedAt) return "—";
+  let s = Math.floor((Date.now()-bot.startedAt)/1000);
+  const d = Math.floor(s/86400); s%=86400;
+  const h = Math.floor(s/3600), m = Math.floor(s%3600/60), sec = s%60;
+  return (d? d+" 天 ":"") + String(h).padStart(2,"0")+":"+String(m).padStart(2,"0")+":"+String(sec).padStart(2,"0");
+}
+function nowTime(){ return new Date().toLocaleTimeString("zh-CN",{hour12:false, timeZone:"Asia/Shanghai"}); }
+function toast(msg, kind="ok"){
+  const icons = {
+    ok:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m4.5 12.5 5 5 10-11"/></svg>',
+    err:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+    info:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 8h.01M12 11v6"/></svg>'
+  };
+  const el = document.createElement("div");
+  el.className = "toast glass "+kind; el.innerHTML = icons[kind] + "<span></span>";
+  el.querySelector("span").textContent = msg;
+  $("#toasts").appendChild(el);
+  setTimeout(()=>{ el.classList.add("out"); setTimeout(()=>el.remove(), 360); }, 2600);
+}
+function countUp(el, to, suffix=""){
+  const from = parseInt(el.dataset.v||"0",10); el.dataset.v = to;
+  const t0 = performance.now(), dur = 700;
+  function step(t){
+    const p = Math.min(1,(t-t0)/dur), e = 1-Math.pow(1-p,3);
+    el.textContent = fmt(Math.round(from+(to-from)*e)) + suffix;
+    if(p<1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+/* ================= 主题：深色 / 白天 / 跟随系统 ================= */
+const mq = matchMedia("(prefers-color-scheme: dark)");
+let themeMode = localStorage.getItem("liyuan-theme") || "dark";
+function applyTheme(){
+  const eff = themeMode==="auto" ? (mq.matches ? "dark":"light") : themeMode;
+  document.documentElement.dataset.theme = eff;
+  $$("#themeSwitch button").forEach(b=> b.classList.toggle("on", b.dataset.themeMode===themeMode));
+  const btns = $$("#themeSwitch button");
+  const idx = btns.findIndex(b=>b.dataset.themeMode===themeMode);
+  const thumb = $("#themeThumb"), target = btns[Math.max(0,idx)];
+  thumb.style.left = target.offsetLeft+"px"; thumb.style.width = target.offsetWidth+"px";
+}
+$$("#themeSwitch button").forEach(b=> b.addEventListener("click", ()=>{
+  themeMode = b.dataset.themeMode; localStorage.setItem("liyuan-theme", themeMode); applyTheme();
+  toast(themeMode==="dark" ? "已切到深色" : themeMode==="light" ? "已切到白天" : "已跟随系统外观", "info");
+}));
+mq.addEventListener?.("change", ()=>{ if(themeMode==="auto") applyTheme(); });
+addEventListener("resize", applyTheme);
+
+/* 时钟（北京时间真实走字） */
+function tickClock(){
+  $("#clockTime").textContent = new Date().toLocaleTimeString("zh-CN",{hour12:false, timeZone:"Asia/Shanghai"});
+}
+tickClock(); setInterval(tickClock, 1000);
+
+/* 壁纸指针视差 */
+addEventListener("pointermove", e=>{
+  const x = (e.clientX/innerWidth - .5), y = (e.clientY/innerHeight - .5);
+  $("#wallpaper").style.transform = `translate(${x*-14}px, ${y*-10}px) scale(1.04)`;
+  $("#wallpaper").style.transition = "transform .8s cubic-bezier(.22,.9,.28,1)";
+}, {passive:true});
+
+/* ================= Bot 卡片 ================= */
+let filter = "all", keyword = "";
+const STATUS = { running:["运行中","run"], stopped:["已停止",""], error:["异常","err"] };
+function colorFor(id){ let h=0; for(const c of id) h=(h*31 + c.charCodeAt(0))>>>0; return AVATAR_COLORS[h%AVATAR_COLORS.length]; }
+function barClass(v){ return v>=85 ? "crit" : v>=65 ? "hot" : ""; }
+
+function render(){
+  const grid = $("#botGrid"); grid.innerHTML = "";
+  const list = DB.bots.filter(b =>
+    (filter==="all" || b.status===filter) &&
+    (!keyword || b.name.toLowerCase().includes(keyword) || b.file.toLowerCase().includes(keyword))
+  );
+  $("#emptyState").classList.toggle("show", list.length===0);
+  list.forEach((bot, i)=>{
+    const [c1,c2] = colorFor(bot.id);
+    const [txt, dotCls] = STATUS[bot.status];
+    const memPct = bot.status==="running" ? Math.min(100, Math.round(bot.mem / parseInt(bot.memLimit) * (bot.memLimit.includes("GB")?102.4:1) )) : 0;
+    const memPctShow = bot.memLimit.includes("GB") ? Math.min(100, Math.round(bot.mem/1024*100)) : Math.min(100, Math.round(bot.mem/parseInt(bot.memLimit)*100));
+    const card = document.createElement("article");
+    card.className = "bot glass"; card.style.setProperty("--i", i); card.dataset.id = bot.id;
+    card.innerHTML = `
+      <span class="specular"></span>
+      <div class="bot-top">
+        <div class="avatar" style="background:linear-gradient(145deg,${c1},${c2})">${bot.name.slice(0,1)}</div>
+        <div style="min-width:0">
+          <div class="bot-name"></div><div class="bot-file"></div>
+        </div>
+        <span class="pill"><span class="dot ${dotCls}"></span>${txt}</span>
+      </div>
+      <div class="metrics">
+        <div class="metric"><span>CPU</span><div class="bar"><i class="${barClass(bot.cpu)}" style="width:${bot.cpu}%"></i></div><b>${bot.cpu}%</b></div>
+        <div class="metric"><span>内存</span><div class="bar"><i class="${barClass(memPctShow)}" style="width:${memPctShow}%"></i></div><b>${bot.status==="running" ? bot.mem+" MB" : "—"}</b></div>
+      </div>
+      <div class="bot-meta">
+        <span>运行时长 <b data-uptime>${uptimeText(bot)}</b></span>
+        <span>今日消息 <b>${fmt(bot.msgs)}</b></span>
+        <span>异常重启 <b>${bot.restarts}</b></span>
+      </div>
+      <canvas class="spark" width="96" height="26"></canvas>
+      <div class="progress-line" data-progress><i></i></div>
+      <div class="bot-actions">
+        <button class="switch ${bot.status==="running"?"on":""}" data-act="toggle" title="${bot.status==="running"?"停止":"启动"}" aria-label="启停开关"></button>
+        <button class="btn btn-ghost" data-act="restart">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 4v5h-5"/></svg>重启</button>
+        <button class="btn btn-ghost" data-act="logs">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 4h14v16H5zM9 9h6M9 13h6"/></svg>日志</button>
+        <button class="btn btn-danger" data-act="del" style="margin-left:auto">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m3 0-1 13a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 7"/></svg>删除</button>
+      </div>`;
+    card.querySelector(".bot-name").textContent = bot.name;
+    card.querySelector(".bot-file").textContent = bot.file;
+    // 高光跟随指针
+    card.addEventListener("pointermove", e=>{
+      const r = card.getBoundingClientRect();
+      card.style.setProperty("--mx", ((e.clientX-r.left)/r.width*100)+"%");
+      card.style.setProperty("--my", ((e.clientY-r.top)/r.height*100)+"%");
+    });
+    card.addEventListener("click", e=>{
+      const actBtn = e.target.closest("[data-act]");
+      if(actBtn){ e.stopPropagation(); handleAction(bot.id, actBtn.dataset.act, card); return; }
+      openDrawer(bot.id);
+    });
+    grid.appendChild(card);
+    drawSpark(card.querySelector(".spark"), bot);
+  });
+  renderStats();
+}
+function drawSpark(cv, bot){
+  if(!cv) return;
+  const ctx = cv.getContext("2d"); const W=cv.width, H=cv.height;
+  ctx.clearRect(0,0,W,H);
+  if(bot.spark.length<2) return;
+  ctx.beginPath();
+  bot.spark.forEach((v,i)=>{ const x=i/(23)*W, y=H-3-(v/100)*(H-6); i?ctx.lineTo(x,y):ctx.moveTo(x,y); });
+  ctx.strokeStyle = getComputedStyle(document.documentElement).dataset.theme==="dark" ? "rgba(120,180,255,.9)" : "rgba(0,82,217,.8)";
+  ctx.lineWidth = 1.6; ctx.lineJoin="round"; ctx.stroke();
+}
+function renderStats(){
+  const total = DB.bots.length;
+  const running = DB.bots.filter(b=>b.status==="running").length;
+  const msgs = DB.bots.reduce((s,b)=>s+b.msgs,0);
+  const restarts = DB.bots.reduce((s,b)=>s+b.restarts,0);
+  countUp($("#stTotal"), total);
+  countUp($("#stRunning"), running);
+  countUp($("#stMsgs"), msgs);
+  countUp($("#stRestarts"), restarts);
+  $("#stResp").textContent = running ? (140 + Math.round(Math.random()*90)) : 0;
+  $("#stRunningSub").textContent = running===total ? "全部在跑 · 守护正常" : (total-running)+" 个未运行";
+  $("#stMsgs").dataset.v = msgs;
+}
+
+/* ================= 操作：启停 / 重启 / 删除 ================= */
+function setStatus(bot, status){
+  bot.status = status;
+  if(status==="running"){ bot.startedAt = Date.now(); if(!bot.cpu) bot.cpu = 8+Math.round(Math.random()*15); if(!bot.mem) bot.mem = 46+Math.round(Math.random()*70); }
+  if(status==="stopped"){ bot.cpu = 0; bot.mem = 0; bot.startedAt = 0; }
+  persist();
+}
+function handleAction(id, act, card){
+  const bot = DB.bots.find(b=>b.id===id); if(!bot) return;
+  if(act==="toggle"){
+    if(bot.status==="running"){ setStatus(bot,"stopped"); pushLog(bot,"warn","收到停止指令，进程已退出"); toast(bot.name+" 已停止","info"); }
+    else { setStatus(bot,"running"); pushLog(bot,"ok","进程已启动，守护接管中"); toast(bot.name+" 已启动"); }
+    render(); refreshDrawer(id);
+  }
+  if(act==="restart"){
+    const bar = card?.querySelector("[data-progress]"); bar?.classList.add("show");
+    pushLog(bot,"warn","收到重启指令，正在重启…");
+    toast(bot.name+" 重启中…","info");
+    const wasRunning = bot.status==="running";
+    bot.cpu = 0; bot.mem = 0;
+    setTimeout(()=>{
+      bot.restarts += wasRunning ? 0 : 0; // 手动重启不计异常
+      setStatus(bot,"running");
+      pushLog(bot,"ok","重启完成，服务恢复");
+      toast(bot.name+" 已重启完成");
+      render(); refreshDrawer(id);
+    }, 1400);
+  }
+  if(act==="logs"){ openDrawer(id); }
+  if(act==="del"){ pendingDelete = id; $("#delText").textContent = `将停止并移除「${bot.name}」（${bot.file}），它的本地日志一并清掉。`; openModal("#delModal"); }
+}
+
+/* ================= 日志流 ================= */
+const LOG_TEMPLATES = [
+  ["info","收到一条新消息，正在处理"],
+  ["ok","消息处理完成，已回复"],
+  ["info","心跳正常，连接保持中"],
+  ["ok","定时任务执行完毕"],
+  ["info","拉取最新数据 24 条"],
+  ["warn","对方响应稍慢，耗时 1.8s"],
+  ["ok","日志轮转完成"],
+  ["info","收到指令 /status，已返回状态"],
+];
+let logs = [], logPaused = false;
+function pushLog(bot, lv, text){
+  const line = {t: nowTime(), lv, bot: bot.name, text};
+  logs.push(line); if(logs.length>300) logs.shift();
+  if(!logPaused) appendLogLine($("#logBox"), line, true);
+  if(drawerBotId===bot.id && !logPaused) appendLogLine($("#dLogBox"), line, true);
+}
+function appendLogLine(box, line, scroll){
+  if(!box) return;
+  const el = document.createElement("div");
+  el.className = "log-line";
+  el.innerHTML = `<span class="t">${line.t}</span> <span class="lv ${line.lv}">${line.lv.toUpperCase().padEnd(4," ")}</span> <span class="bn">[${escapeHtml(line.bot)}]</span> ${escapeHtml(line.text)}`;
+  box.appendChild(el);
+  while(box.children.length>160) box.firstChild.remove();
+  if(scroll) box.scrollTop = box.scrollHeight;
+}
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+$("#logPause").addEventListener("click", function(){
+  logPaused = !logPaused; this.classList.toggle("on", !logPaused);
+  this.innerHTML = logPaused
+    ? '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M7 4.8v14.4L19 12 7 4.8Z"/></svg>'
+    : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M9 5v14M15 5v14"/></svg>';
+  toast(logPaused ? "日志已暂停滚动" : "日志继续滚动", "info");
+});
+$("#logClear").addEventListener("click", ()=>{ $("#logBox").innerHTML=""; toast("日志已清空","info"); });
+
+/* ================= 实时模拟：指标抖动 + 消息 + 日志 ================= */
+setInterval(()=>{
+  let changed = false;
+  DB.bots.forEach(bot=>{
+    if(bot.status!=="running") return;
+    bot.cpu = Math.max(2, Math.min(96, bot.cpu + Math.round((Math.random()-.5)*10)));
+    const cap = bot.memLimit.includes("GB") ? parseInt(bot.memLimit)*1024 : parseInt(bot.memLimit);
+    bot.mem = Math.max(24, Math.min(Math.round(cap*.92), bot.mem + Math.round((Math.random()-.5)*14)));
+    bot.spark.push(bot.cpu); if(bot.spark.length>24) bot.spark.shift();
+    if(Math.random()<.55){ bot.msgs += 1+Math.floor(Math.random()*3); changed = true; }
+    if(Math.random()<.30){
+      const [lv, text] = LOG_TEMPLATES[Math.floor(Math.random()*LOG_TEMPLATES.length)];
+      pushLog(bot, lv, text);
+    }
+    // 卡片原位更新，不整页重排
+    const card = document.querySelector(`.bot[data-id="${bot.id}"]`);
+    if(card){
+      const bars = card.querySelectorAll(".bar i");
+      bars[0].style.width = bot.cpu+"%"; bars[0].className = barClass(bot.cpu);
+      bars[1].style.width = (bot.memLimit.includes("GB") ? Math.min(100, Math.round(bot.mem/1024*100)) : Math.min(100, Math.round(bot.mem/parseInt(bot.memLimit)*100)))+"%";
+      const bolds = card.querySelectorAll(".metric b");
+      bolds[0].textContent = bot.cpu+"%"; bolds[1].textContent = bot.mem+" MB";
+      drawSpark(card.querySelector(".spark"), bot);
+    }
+  });
+  if(changed){
+    const msgs = DB.bots.reduce((s,b)=>s+b.msgs,0);
+    countUp($("#stMsgs"), msgs);
+    DB.bots.forEach(bot=>{
+      const card = document.querySelector(`.bot[data-id="${bot.id}"]`);
+      if(card){ const els = card.querySelectorAll(".bot-meta b"); if(els[1]) els[1].textContent = fmt(bot.msgs); }
+    });
+  }
+  // 运行时长走字
+  $$("[data-uptime]").forEach(el=>{
+    const card = el.closest(".bot"); if(!card) return;
+    const bot = DB.bots.find(b=>b.id===card.dataset.id);
+    if(bot) el.textContent = uptimeText(bot);
+  });
+  if(drawerBotId) refreshDrawer(drawerBotId, true);
+}, 1000);
+
+/* 偶发异常演示：error 的 bot 不自动恢复，running 的极低概率抖动一条 err 日志 */
+setInterval(()=>{
+  const err = DB.bots.find(b=>b.status==="error");
+  if(err && Math.random()<.5) pushLog(err,"err","连接上游失败，等待手动重启（守护已重试 5 次）");
+}, 9000);
+
+/* ================= 搜索 / 筛选 ================= */
+$("#searchInput").addEventListener("input", e=>{ keyword = e.target.value.trim().toLowerCase(); render(); });
+$("#filterChips").addEventListener("click", e=>{
+  const chip = e.target.closest(".chip"); if(!chip) return;
+  $$("#filterChips .chip").forEach(c=>c.classList.remove("on"));
+  chip.classList.add("on"); filter = chip.dataset.filter; render();
+});
+
+/* ================= 弹窗通用 ================= */
+function openModal(sel){ $("#mask").classList.add("show"); $(sel).classList.add("show"); $(sel).setAttribute("aria-hidden","false"); }
+function closeModals(){
+  $("#mask").classList.remove("show");
+  $$(".modal").forEach(m=>{ m.classList.remove("show"); m.setAttribute("aria-hidden","true"); });
+  $("#drawer").classList.remove("show"); drawerBotId = null;
+}
+$("#mask").addEventListener("click", closeModals);
+addEventListener("keydown", e=>{ if(e.key==="Escape") closeModals(); });
+
+/* ================= 添加 Bot + 安全扫描 ================= */
+let scannedFile = null, scanFindings = [];
+const RISK_RULES = [
+  {sev:"high", pat:/shutil\.rmtree|os\.remove|os\.unlink|Path\([^)]*\)\.unlink/, label:"删除文件", desc:"出现删除文件/目录的调用，真托管前请确认删除范围"},
+  {sev:"high", pat:/os\.system|subprocess\.|popen\(/, label:"执行系统命令", desc:"可执行任意系统命令，是托管的最高风险项"},
+  {sev:"high", pat:/credential|password|token|\.env|id_rsa|AppSecret/i, label:"疑似读凭证", desc:"代码里出现凭证相关字样，确认它不会把凭证发到外部"},
+  {sev:"mid", pat:/requests\.post|urllib|socket\.|http\.client/, label:"对外发送数据", desc:"出现对外请求，确认目标地址都是你自己的服务"},
+  {sev:"mid", pat:/\beval\s*\(|\bexec\s*\(/, label:"动态执行代码", desc:"eval/exec 会执行字符串代码，来源不可控时很危险"},
+  {sev:"mid", pat:/while\s+True\s*:\s*pass/, label:"空转死循环", desc:"while True: pass 会把 CPU 跑满，需要加 sleep"},
+];
+$("#openAdd").addEventListener("click", ()=> openModal("#addModal"));
+$("#cancelAdd").addEventListener("click", closeModals);
+const dz = $("#dropzone"), fi = $("#fileInput");
+dz.addEventListener("click", ()=> fi.click());
+["dragover","dragenter"].forEach(ev=> dz.addEventListener(ev, e=>{ e.preventDefault(); dz.classList.add("over"); }));
+["dragleave","drop"].forEach(ev=> dz.addEventListener(ev, e=>{ e.preventDefault(); dz.classList.remove("over"); }));
+dz.addEventListener("drop", e=>{ const f = e.dataTransfer.files[0]; if(f) handleFile(f); });
+fi.addEventListener("change", ()=>{ if(fi.files[0]) handleFile(fi.files[0]); });
+
+function handleFile(file){
+  if(!file.name.endsWith(".py")){ toast("只接受 .py 文件","err"); return; }
+  $("#dzTitle").textContent = file.name;
+  $("#dzSub").textContent = (file.size/1024).toFixed(1)+" KB · 正在本机扫描…";
+  $("#botFile").value = file.name;
+  if(!$("#botName").value) $("#botName").value = file.name.replace(/\.py$/,"").replace(/[_-]+/g," ");
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    const code = String(reader.result||"");
+    scannedFile = {name: file.name, size: file.size};
+    scanFindings = RISK_RULES.filter(r=> r.pat.test(code)).map(r=>({sev:r.sev, label:r.label, desc:r.desc}));
+    const box = $("#scanBox"); box.classList.add("show");
+    const list = $("#scanList"); list.innerHTML = "";
+    if(!scanFindings.length){
+      list.innerHTML = '<div class="scan-item"><span class="sev ok">通过</span><span>没扫到删文件、读凭证、外传数据、任意命令执行等危险调用。</span></div>';
+    } else {
+      scanFindings.forEach(f=>{
+        const el = document.createElement("div"); el.className="scan-item";
+        el.innerHTML = `<span class="sev ${f.sev==="high"?"high":"mid"}">${f.sev==="high"?"高风险":"注意"}</span><span><b>${f.label}</b> — ${f.desc}</span>`;
+        list.appendChild(el);
+      });
+    }
+    const risky = scanFindings.length>0;
+    $("#riskCheckLine").classList.toggle("show", risky);
+    $("#riskCheck").checked = false;
+    $("#confirmAdd").disabled = risky;
+    $("#dzSub").textContent = (file.size/1024).toFixed(1)+" KB · 扫描完成，"+(risky ? "发现 "+scanFindings.length+" 项风险" : "未发现风险");
+  };
+  reader.readAsText(file);
+}
+$("#riskCheck").addEventListener("change", e=>{ $("#confirmAdd").disabled = !e.target.checked; });
+$("#botName").addEventListener("input", updateConfirmState);
+$("#botFile").addEventListener("input", updateConfirmState);
+function updateConfirmState(){
+  if(!scannedFile) return;
+  const risky = scanFindings.length>0;
+  $("#confirmAdd").disabled = risky ? !$("#riskCheck").checked : false;
+}
+$("#confirmAdd").addEventListener("click", ()=>{
+  const name = $("#botName").value.trim() || (scannedFile?.name.replace(/\.py$/,"") || "新 Bot");
+  const file = $("#botFile").value.trim() || scannedFile?.name || "new_bot.py";
+  if(DB.bots.some(b=>b.file===file)){ toast("同名文件已经在托管里了","err"); return; }
+  const bot = { id:"b"+Date.now(), name, file, status:"stopped", cpu:0, mem:0,
+    memLimit: $("#memLimit").value, cpuLimit: $("#cpuLimit").value, startedAt:0, msgs:0, restarts:0, spark:[] };
+  DB.bots.unshift(bot); persist(); closeModals(); render();
+  pushLog(bot,"info","已登记托管，等待启动");
+  toast("「"+name+"」已登记，点开关即可启动");
+  // 重置表单
+  scannedFile = null; scanFindings = []; fi.value="";
+  $("#dzTitle").textContent = "把 .py 文件拖到这里，或点这里选文件";
+  $("#dzSub").textContent = "只接受 .py · 扫描项：删文件 / 读凭证 / 外传数据 / 任意命令执行";
+  $("#scanBox").classList.remove("show"); $("#riskCheckLine").classList.remove("show");
+  $("#botName").value=""; $("#botFile").value=""; $("#confirmAdd").disabled = true;
+});
+
+/* ================= 删除 ================= */
+let pendingDelete = null;
+$("#cancelDel").addEventListener("click", closeModals);
+$("#confirmDel").addEventListener("click", ()=>{
+  const bot = DB.bots.find(b=>b.id===pendingDelete);
+  DB.bots = DB.bots.filter(b=>b.id!==pendingDelete);
+  persist(); pendingDelete = null; closeModals(); render();
+  toast("「"+(bot?.name||"Bot")+"」已删除","info");
+});
+
+/* ================= 详情抽屉 ================= */
+let drawerBotId = null;
+function openDrawer(id){
+  drawerBotId = id;
+  $("#mask").classList.add("show");
+  $("#drawer").classList.add("show");
+  $("#dLogBox").innerHTML = "";
+  logs.filter(l=>{ const b = DB.bots.find(x=>x.id===id); return b && l.bot===b.name; }).slice(-40)
+    .forEach(l=> appendLogLine($("#dLogBox"), l, false));
+  $("#dLogBox").scrollTop = $("#dLogBox").scrollHeight;
+  refreshDrawer(id);
+}
+function refreshDrawer(id, silent){
+  if(drawerBotId!==id) return;
+  const bot = DB.bots.find(b=>b.id===id); if(!bot) return;
+  $("#dName").textContent = bot.name;
+  $("#dFile").textContent = bot.file;
+  $("#dStatus").textContent = STATUS[bot.status][0];
+  $("#dUptime").textContent = uptimeText(bot);
+  $("#dMetrics").textContent = bot.status==="running" ? bot.cpu+"% / "+bot.mem+" MB" : "—";
+  $("#dLimits").textContent = "CPU "+bot.cpuLimit+" · 内存 "+bot.memLimit;
+  $("#dMsgs").textContent = fmt(bot.msgs);
+  $("#dRestarts").textContent = bot.restarts+" 次";
+  if(!silent){
+    const box = $("#dActions"); box.innerHTML = "";
+    const mk = (label, cls, fn)=>{
+      const b = document.createElement("button"); b.className="btn "+cls; b.textContent = label;
+      b.addEventListener("click", ()=>{ fn(); refreshDrawer(id); }); box.appendChild(b);
+    };
+    if(bot.status==="running") mk("停止","btn-ghost", ()=>{ setStatus(bot,"stopped"); pushLog(bot,"warn","收到停止指令，进程已退出"); render(); });
+    else mk("启动","btn-primary", ()=>{ setStatus(bot,"running"); pushLog(bot,"ok","进程已启动，守护接管中"); render(); });
+    mk("重启","btn-ghost", ()=>{ setStatus(bot,"running"); bot.restarts+=0; pushLog(bot,"ok","手动重启完成"); render(); toast(bot.name+" 已重启"); });
+    mk("删除","btn-danger", ()=>{ closeModals(); pendingDelete = id; openModal("#delModal"); });
+  }
+}
+$("#closeDrawer").addEventListener("click", closeModals);
+
+/* ================= 启动 ================= */
+applyTheme();
+render();
+// 首帧把主题滑块对齐（字体加载后位置更准）
+setTimeout(applyTheme, 60); setTimeout(applyTheme, 400);
+DB.bots.filter(b=>b.status==="running").forEach((bot,i)=>{
+  setTimeout(()=> pushLog(bot,"ok","巡检正常，进程运行中"), 300+i*180);
+});
+const errBot = DB.bots.find(b=>b.status==="error");
+if(errBot) setTimeout(()=> pushLog(errBot,"err","进程退出码 1，最后错误：上游连接超时"), 900);
+persist();
+</script>
+</body>
+</html>
