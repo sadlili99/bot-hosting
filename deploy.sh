@@ -48,7 +48,8 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-systemctl enable --now liyuan-bot-host.service
+systemctl enable liyuan-bot-host.service
+systemctl restart liyuan-bot-host.service
 
 echo "==> 健康检查"
 for i in $(seq 1 15); do
