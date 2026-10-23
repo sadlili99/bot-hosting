@@ -356,11 +356,8 @@ tbody tr:hover{background:var(--hover)}
           </div>
         </div>
         <div class="panel" style="margin-top:16px">
-          <div class="panel-h"><h3>近 24 小时统计</h3><div class="sp"></div><span class="note" id="chNote">每 30 秒真实采样 · 按住图上的柱子看那一小时的明细</span></div>
-          <div class="chart-h"><b>主机 CPU</b><span class="dim" id="chCpuNow">—</span></div>
-          <div class="chart" id="chCpu"></div>
-          <div class="chart-h" style="margin-top:12px"><b>主机内存</b><span class="dim" id="chMemNow">—</span></div>
-          <div class="chart mem" id="chMem"></div>
+          <div class="panel-h"><h3>运行统计</h3><div class="sp"></div><span class="note">实时数据 · 长按任意一条看精确数值</span></div>
+          <div class="bars" id="statBars"><div class="dim">加载中…</div></div>
         </div>
         <div class="panel" style="margin-top:16px">
           <div class="panel-h"><h3>最近操作</h3><div class="sp"></div><button class="btn btn-default" id="gotoAudit">查看全部</button></div>
@@ -423,11 +420,8 @@ tbody tr:hover{background:var(--hover)}
     <div class="d-actions" id="dActions"></div>
     <div class="d-sec">运行信息</div>
     <dl class="kv2" id="dKv"></dl>
-    <div class="d-sec">近 24 小时统计（按住柱子看那一小时的明细）</div>
-    <div class="chart-h"><b>CPU</b><span class="dim" id="dChCpuNow">—</span></div>
-    <div class="chart" id="dChCpu"></div>
-    <div class="chart-h" style="margin-top:10px"><b>内存</b><span class="dim" id="dChMemNow">—</span></div>
-    <div class="chart mem" id="dChMem"></div>
+    <div class="d-sec">运行统计（长按看精确数值）</div>
+    <div class="bars" id="dBars"></div>
     <div class="d-sec">安全扫描</div>
     <div id="dScan"></div>
     <div class="d-sec">最新日志</div>
@@ -478,6 +472,7 @@ tbody tr:hover{background:var(--hover)}
   </div>
 </section>
 
+<div id="tip"></div>
 <div class="toasts" id="toasts"></div>
 
 <script>
@@ -650,107 +645,81 @@ function renderOverview(s){
   $("#hUp").textContent = fmtUptime(h.uptimeSeconds);
   $("#hTime").textContent = fmtTime(h.time);
   $("#hostNote").textContent = "Python " + h.python + " · 数据来自 /proc 实时读取";
-  loadHostCharts();
+  renderStatBars();
 }
 
-/* ---------- 近 24 小时柱状图（真实采样，按压查看明细） ---------- */
-const _metricsCache = {};
+/* ---------- 运行统计：横向平行条（长按看精确数值） ---------- */
 function fmtMemMB(v){ return v >= 1024 ? (v/1024).toFixed(2)+" GB" : Math.round(v)+" MB"; }
-function fmtHourRange(t){
-  const d = new Date(t*1000), e = new Date((t+3600)*1000);
-  const p = n => String(n).padStart(2,"0");
-  return `${d.getMonth()+1}/${d.getDate()} ${p(d.getHours())}:00–${p(e.getHours())}:00`;
+function barCls(pct){ return pct >= 90 ? "r" : pct >= 70 ? "a" : "b"; }
+function barRow(label, pct, valueText, tipText){
+  const p = Math.max(0, Math.min(100, pct || 0));
+  return `<div class="barrow" data-tip="${esc(tipText)}"><span class="bl">${esc(label)}</span><div class="bar"><i class="${barCls(p)}" style="width:${p}%"></i></div><span class="bv">${esc(valueText)}</span></div>`;
 }
-function hourSlots(){
-  const now = Math.floor(Date.now()/1000), h0 = now - now%3600, arr = [];
-  for(let i=23;i>=0;i--) arr.push(h0 - i*3600);
-  return arr;
+function hostBarRows(){
+  const h = hostInfo; if(!h) return "";
+  const load = h.load.map(x=>x.toFixed(2)).join(" / ");
+  return barRow("主机 CPU", h.cpuPercent, h.cpuPercent + "%",
+      "主机 CPU 使用率\n当前 " + h.cpuPercent + "%\n系统负载 " + load)
+    + barRow("主机内存", h.memPercent, fmtMemMB(h.memUsedMB),
+      "主机内存占用\n已用 " + h.memUsedMB + " MB / 共 " + h.memTotalMB + " MB\n占用 " + h.memPercent + "%");
 }
-function drawChart(el, buckets, kind, scaleMax){
-  if(!el) return;
-  const slots = hourSlots(), map = {};
-  (buckets||[]).forEach(b=>map[b.t]=b);
-  const key = kind==="cpu" ? "cpuAvg" : "memAvg", maxKey = kind==="cpu" ? "cpuMax" : "memMax";
-  let vmax = scaleMax || 0;
-  slots.forEach(t=>{ const b = map[t]; if(b) vmax = Math.max(vmax, b[maxKey]); });
-  if(vmax <= 0) vmax = 1;
-  const W = 720, base = 158, bw = 18, gap = (W-40)/24;
-  let bars = "";
-  slots.forEach((t,i)=>{
-    const b = map[t], x = 30 + i*gap + (gap-bw)/2;
-    if(b){
-      const hgt = Math.max(2.5, (b[key]/vmax)*(base-20));
-      bars += `<rect class="cb" data-i="${i}" x="${x.toFixed(1)}" y="${(base-hgt).toFixed(1)}" width="${bw}" height="${hgt.toFixed(1)}" rx="4"></rect>`;
-    } else {
-      bars += `<rect class="cb empty" data-i="${i}" x="${x.toFixed(1)}" y="${base-2}" width="${bw}" height="2" rx="1"></rect>`;
-    }
+function botBarRows(bot){
+  const run = bot.status === "running";
+  const cpuOfLimit = run && bot.cpuLimit ? bot.cpuPercent / bot.cpuLimit * 100 : 0;
+  const memPct = run && bot.memLimit ? bot.memMB / bot.memLimit * 100 : 0;
+  const cpuTip = run
+    ? bot.name + " · CPU 使用率\n当前 " + bot.cpuPercent + "%（上限 " + bot.cpuLimit + "%）\n占上限 " + Math.round(cpuOfLimit) + "%"
+    : bot.name + " · CPU 使用率\n当前未运行";
+  const memTip = run
+    ? bot.name + " · 内存占用\n当前 " + bot.memMB + " MB（上限 " + bot.memLimit + " MB）\n占上限 " + Math.round(memPct) + "%"
+    : bot.name + " · 内存占用\n当前未运行";
+  return barRow("CPU 使用率", cpuOfLimit, run ? bot.cpuPercent + "%" : "未运行", cpuTip)
+    + barRow("内存占用", memPct, run ? bot.memMB + " MB" : "未运行", memTip);
+}
+function renderStatBars(){
+  const el = $("#statBars"); if(!el) return;
+  let html = hostBarRows();
+  (bots || []).forEach(bot=>{
+    const st = bot.status === "running" ? "运行中" : bot.status === "error" ? "异常" : "已停止";
+    html += `<div class="botbars"><div class="barrow" style="grid-template-columns:1fr auto"><span class="bl" style="color:var(--ink);font-weight:650">${esc(bot.name)}</span><span class="dim" style="font-size:12px">${st}</span></div>${botBarRows(bot)}</div>`;
   });
-  const xl = slots.map((t,i)=>{
-    if(i%6!==0 && i!==23) return "";
-    const d = new Date(t*1000);
-    return `<text x="${30+i*gap+gap/2}" y="${base+22}" class="cx">${d.getHours()}时</text>`;
-  }).join("");
-  const top = kind==="cpu" ? vmax+"%" : fmtMemMB(vmax);
-  el.innerHTML = `<svg viewBox="0 0 ${W} 190" preserveAspectRatio="none" style="height:190px"><text x="24" y="14" class="cy">${top}</text><line x1="24" y1="${base}" x2="${W-6}" y2="${base}" class="cbase"/>${bars}${xl}</svg>`;
-  el._slots = slots; el._map = map; el._kind = kind;
+  if(!(bots || []).length) html += `<div class="dim" style="font-size:12.5px">还没有 Bot，添加后这里会显示每个 Bot 的 CPU 与内存。</div>`;
+  el.innerHTML = html;
 }
-async function fetchMetrics(botKey){
-  const c = _metricsCache[botKey];
-  if(c && Date.now()-c.at < 15000) return c.data;
-  const r = await api("/api/metrics?bot=" + encodeURIComponent(botKey));
-  _metricsCache[botKey] = {at: Date.now(), data: r.buckets||[]};
-  return _metricsCache[botKey].data;
+function renderDrawerBars(bot){
+  const el = $("#dBars"); if(!el) return;
+  el.innerHTML = botBarRows(bot);
 }
-async function loadHostCharts(){
-  const h = hostInfo; if(!h || curView !== "overview") return;
-  try{
-    const buckets = await fetchMetrics("host");
-    drawChart($("#chCpu"), buckets, "cpu", 100);
-    drawChart($("#chMem"), buckets, "mem", h.memTotalMB);
-    $("#chCpuNow").textContent = "当前 " + h.cpuPercent + "%";
-    $("#chMemNow").textContent = "当前 " + fmtMemMB(h.memUsedMB) + " / " + fmtMemMB(h.memTotalMB);
-    if(!buckets.length) $("#chNote").textContent = "正在积累采样（每 30 秒一次），几分钟后柱子就会长出来";
-  }catch(e){}
-}
-async function loadBotCharts(bot){
-  try{
-    const buckets = await fetchMetrics(bot.id);
-    drawChart($("#dChCpu"), buckets, "cpu", Math.max(100, bot.cpuLimit||100));
-    drawChart($("#dChMem"), buckets, "mem", bot.memLimit||512);
-    $("#dChCpuNow").textContent = bot.status==="running" ? "当前 " + bot.cpuPercent + "% · 上限 " + bot.cpuLimit + "%" : "未运行";
-    $("#dChMemNow").textContent = bot.status==="running" ? "当前 " + bot.memMB + " MB · 上限 " + bot.memLimit + " MB" : "未运行";
-  }catch(e){}
-}
-/* 按压/拖动查看某根柱子的明细卡 */
-let _scrubEl = null;
-function showTipAt(html, x, top){
-  const tip = $("#tip");
-  tip.innerHTML = html;
+/* 长按查看精确数值（浮卡） */
+function showTipAt(text, x, y){
+  const tip = $("#tip"); if(!tip) return;
+  tip.textContent = text;
   tip.style.left = Math.max(8, Math.min(innerWidth-280, x-90)) + "px";
-  tip.style.top = Math.max(8, top-12) + "px";
+  tip.style.top = Math.max(8, y-12) + "px";
   tip.style.transform = "translateY(-100%)";
   tip.classList.add("show");
 }
-function hideTip(){ $("#tip").classList.remove("show"); }
-function chartScrub(el, clientX){
-  const r = el.getBoundingClientRect(), slots = el._slots; if(!slots) return;
-  const i = Math.max(0, Math.min(23, Math.floor((clientX-r.left)/r.width*24)));
-  const t = slots[i], b = el._map[t], kind = el._kind;
-  el.querySelectorAll(".cb").forEach(c=>c.classList.toggle("sel", +c.dataset.i===i));
-  let html;
-  if(!b) html = `<b>${fmtHourRange(t)}</b>\n这一小时暂无采样`;
-  else if(kind==="cpu") html = `<b>${fmtHourRange(t)}</b>\n平均 CPU　${b.cpuAvg}%\n峰值 CPU　${b.cpuMax}%\n采样 ${b.n} 次`;
-  else html = `<b>${fmtHourRange(t)}</b>\n平均内存　${fmtMemMB(b.memAvg)}\n峰值内存　${fmtMemMB(b.memMax)}\n采样 ${b.n} 次`;
-  showTipAt(html, clientX, r.top);
-}
+function hideTip(){ const t = $("#tip"); if(t) t.classList.remove("show"); }
+let _tipTimer = null, _tipStart = null;
 document.addEventListener("pointerdown", e=>{
-  const el = e.target.closest && e.target.closest(".chart");
-  if(el && el._slots){ _scrubEl = el; chartScrub(el, e.clientX); }
+  const el = e.target.closest && e.target.closest("[data-tip]");
+  hideTip(); clearTimeout(_tipTimer);
+  if(!el) return;
+  _tipStart = {x: e.clientX, y: e.clientY};
+  _tipTimer = setTimeout(()=>{ showTipAt(el.dataset.tip, e.clientX, e.clientY); }, 450);
 });
-document.addEventListener("pointermove", e=>{ if(_scrubEl) chartScrub(_scrubEl, e.clientX); });
+document.addEventListener("pointermove", e=>{
+  if(_tipStart && Math.hypot(e.clientX-_tipStart.x, e.clientY-_tipStart.y) > 14){
+    clearTimeout(_tipTimer); _tipStart = null;
+  }
+});
 ["pointerup","pointercancel"].forEach(ev=>document.addEventListener(ev, ()=>{
-  if(_scrubEl){ _scrubEl = null; setTimeout(hideTip, 900); }
+  clearTimeout(_tipTimer); _tipStart = null;
+  if($("#tip") && $("#tip").classList.contains("show")) setTimeout(hideTip, 700);
 }));
+document.addEventListener("contextmenu", e=>{
+  if(e.target.closest && e.target.closest("[data-tip]")) e.preventDefault();
+});
 async function loadRecentAudit(){
   try{
     const r = await api("/api/audit?limit=5");
@@ -896,7 +865,7 @@ async function renderDrawer(id, silent=false){
     ["登记时间", fmtTime(bot.createdAt)],
   ];
   $("#dKv").innerHTML = kv.map(([k,v])=>`<dt>${k}</dt><dd>${esc(v)}</dd>`).join("");
-  loadBotCharts(bot);
+  renderDrawerBars(bot);
   const acts = $("#dActions"); acts.innerHTML = "";
   const mk = (label, cls, fn)=>{
     const b = document.createElement("button"); b.className = "btn "+cls; b.textContent = label;
