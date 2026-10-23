@@ -159,6 +159,33 @@ tbody tr:hover{background:var(--hover)}
 .num-cell{font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap}
 .dim{color:var(--ink2);font-size:12.5px}
 .row-actions{display:flex;gap:2px;justify-content:flex-end}
+.bars{display:flex;flex-direction:column;gap:13px}
+.barrow{display:grid;grid-template-columns:104px 1fr 92px;gap:10px;align-items:center;font-size:13px}
+.barrow .bl{color:var(--ink2);font-weight:550;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.barrow .bv{text-align:right;font-weight:650;font-variant-numeric:tabular-nums;white-space:nowrap}
+.bar{height:12px;background:var(--field);border-radius:99px;overflow:hidden;display:flex}
+.bar>i{display:block;height:100%;border-radius:99px;transition:width .8s var(--ease)}
+.bar>i.g{background:var(--green)} .bar>i.r{background:var(--red)} .bar>i.a{background:var(--amber)} .bar>i.b{background:var(--blue)} .bar>i.gr{background:#98a2b3}
+.stack{display:flex;height:14px;border-radius:99px;overflow:hidden;background:var(--field)}
+.stack>i{display:block;height:100%;transition:width .8s var(--ease)}
+.botbars{border-top:1px dashed var(--line2);padding-top:11px;margin-top:2px}
+.botbars .bname{font-size:13px;font-weight:650;margin-bottom:7px;display:flex;gap:8px;align-items:center}
+.botbars .barrow{grid-template-columns:44px 1fr 92px;margin-top:6px}
+#tip{position:fixed;z-index:300;pointer-events:none;background:var(--panel);color:var(--ink);border:1px solid var(--line2);font-size:12.5px;line-height:1.65;padding:10px 13px;border-radius:14px;box-shadow:0 12px 32px rgba(16,24,40,.18);opacity:0;transition:opacity .15s;max-width:270px;white-space:pre-line}
+#tip.show{opacity:1}
+#tip b{font-size:13px}
+.chart{touch-action:pan-y;user-select:none;-webkit-user-select:none}
+.chart svg{width:100%;display:block}
+.chart .cb{fill:var(--blue);opacity:.82}
+.chart.mem .cb{fill:#6aa6ff}
+.chart .cb.empty{fill:var(--line)}
+.chart .cb.sel{opacity:1;stroke:var(--blue-hover);stroke-width:1.6}
+.chart.mem .cb.sel{stroke:#2f6fd0}
+.chart .cbase{stroke:var(--line);stroke-width:1}
+.chart .cx{fill:var(--ink2);font-size:11px;text-anchor:middle}
+.chart .cy{fill:var(--ink2);font-size:11px}
+.chart-h{display:flex;align-items:baseline;gap:10px;margin-bottom:2px}
+.chart-h b{font-size:13.5px}
 .mini-meter{width:74px;height:5px;border-radius:99px;background:var(--field);overflow:hidden;margin-top:5px}
 .mini-meter i{display:block;height:100%;background:var(--blue);border-radius:99px;transition:width .8s var(--ease)}
 .empty{padding:52px 20px;text-align:center;color:var(--ink2)}
@@ -329,6 +356,13 @@ tbody tr:hover{background:var(--hover)}
           </div>
         </div>
         <div class="panel" style="margin-top:16px">
+          <div class="panel-h"><h3>近 24 小时统计</h3><div class="sp"></div><span class="note" id="chNote">每 30 秒真实采样 · 按住图上的柱子看那一小时的明细</span></div>
+          <div class="chart-h"><b>主机 CPU</b><span class="dim" id="chCpuNow">—</span></div>
+          <div class="chart" id="chCpu"></div>
+          <div class="chart-h" style="margin-top:12px"><b>主机内存</b><span class="dim" id="chMemNow">—</span></div>
+          <div class="chart mem" id="chMem"></div>
+        </div>
+        <div class="panel" style="margin-top:16px">
           <div class="panel-h"><h3>最近操作</h3><div class="sp"></div><button class="btn btn-default" id="gotoAudit">查看全部</button></div>
           <div id="recentAudit"><div class="skel"><i></i><i style="width:82%"></i><i style="width:64%"></i></div></div>
         </div>
@@ -389,6 +423,11 @@ tbody tr:hover{background:var(--hover)}
     <div class="d-actions" id="dActions"></div>
     <div class="d-sec">运行信息</div>
     <dl class="kv2" id="dKv"></dl>
+    <div class="d-sec">近 24 小时统计（按住柱子看那一小时的明细）</div>
+    <div class="chart-h"><b>CPU</b><span class="dim" id="dChCpuNow">—</span></div>
+    <div class="chart" id="dChCpu"></div>
+    <div class="chart-h" style="margin-top:10px"><b>内存</b><span class="dim" id="dChMemNow">—</span></div>
+    <div class="chart mem" id="dChMem"></div>
     <div class="d-sec">安全扫描</div>
     <div id="dScan"></div>
     <div class="d-sec">最新日志</div>
@@ -611,7 +650,107 @@ function renderOverview(s){
   $("#hUp").textContent = fmtUptime(h.uptimeSeconds);
   $("#hTime").textContent = fmtTime(h.time);
   $("#hostNote").textContent = "Python " + h.python + " · 数据来自 /proc 实时读取";
+  loadHostCharts();
 }
+
+/* ---------- 近 24 小时柱状图（真实采样，按压查看明细） ---------- */
+const _metricsCache = {};
+function fmtMemMB(v){ return v >= 1024 ? (v/1024).toFixed(2)+" GB" : Math.round(v)+" MB"; }
+function fmtHourRange(t){
+  const d = new Date(t*1000), e = new Date((t+3600)*1000);
+  const p = n => String(n).padStart(2,"0");
+  return `${d.getMonth()+1}/${d.getDate()} ${p(d.getHours())}:00–${p(e.getHours())}:00`;
+}
+function hourSlots(){
+  const now = Math.floor(Date.now()/1000), h0 = now - now%3600, arr = [];
+  for(let i=23;i>=0;i--) arr.push(h0 - i*3600);
+  return arr;
+}
+function drawChart(el, buckets, kind, scaleMax){
+  if(!el) return;
+  const slots = hourSlots(), map = {};
+  (buckets||[]).forEach(b=>map[b.t]=b);
+  const key = kind==="cpu" ? "cpuAvg" : "memAvg", maxKey = kind==="cpu" ? "cpuMax" : "memMax";
+  let vmax = scaleMax || 0;
+  slots.forEach(t=>{ const b = map[t]; if(b) vmax = Math.max(vmax, b[maxKey]); });
+  if(vmax <= 0) vmax = 1;
+  const W = 720, base = 158, bw = 18, gap = (W-40)/24;
+  let bars = "";
+  slots.forEach((t,i)=>{
+    const b = map[t], x = 30 + i*gap + (gap-bw)/2;
+    if(b){
+      const hgt = Math.max(2.5, (b[key]/vmax)*(base-20));
+      bars += `<rect class="cb" data-i="${i}" x="${x.toFixed(1)}" y="${(base-hgt).toFixed(1)}" width="${bw}" height="${hgt.toFixed(1)}" rx="4"></rect>`;
+    } else {
+      bars += `<rect class="cb empty" data-i="${i}" x="${x.toFixed(1)}" y="${base-2}" width="${bw}" height="2" rx="1"></rect>`;
+    }
+  });
+  const xl = slots.map((t,i)=>{
+    if(i%6!==0 && i!==23) return "";
+    const d = new Date(t*1000);
+    return `<text x="${30+i*gap+gap/2}" y="${base+22}" class="cx">${d.getHours()}时</text>`;
+  }).join("");
+  const top = kind==="cpu" ? vmax+"%" : fmtMemMB(vmax);
+  el.innerHTML = `<svg viewBox="0 0 ${W} 190" preserveAspectRatio="none" style="height:190px"><text x="24" y="14" class="cy">${top}</text><line x1="24" y1="${base}" x2="${W-6}" y2="${base}" class="cbase"/>${bars}${xl}</svg>`;
+  el._slots = slots; el._map = map; el._kind = kind;
+}
+async function fetchMetrics(botKey){
+  const c = _metricsCache[botKey];
+  if(c && Date.now()-c.at < 15000) return c.data;
+  const r = await api("/api/metrics?bot=" + encodeURIComponent(botKey));
+  _metricsCache[botKey] = {at: Date.now(), data: r.buckets||[]};
+  return _metricsCache[botKey].data;
+}
+async function loadHostCharts(){
+  const h = hostInfo; if(!h || curView !== "overview") return;
+  try{
+    const buckets = await fetchMetrics("host");
+    drawChart($("#chCpu"), buckets, "cpu", 100);
+    drawChart($("#chMem"), buckets, "mem", h.memTotalMB);
+    $("#chCpuNow").textContent = "当前 " + h.cpuPercent + "%";
+    $("#chMemNow").textContent = "当前 " + fmtMemMB(h.memUsedMB) + " / " + fmtMemMB(h.memTotalMB);
+    if(!buckets.length) $("#chNote").textContent = "正在积累采样（每 30 秒一次），几分钟后柱子就会长出来";
+  }catch(e){}
+}
+async function loadBotCharts(bot){
+  try{
+    const buckets = await fetchMetrics(bot.id);
+    drawChart($("#dChCpu"), buckets, "cpu", Math.max(100, bot.cpuLimit||100));
+    drawChart($("#dChMem"), buckets, "mem", bot.memLimit||512);
+    $("#dChCpuNow").textContent = bot.status==="running" ? "当前 " + bot.cpuPercent + "% · 上限 " + bot.cpuLimit + "%" : "未运行";
+    $("#dChMemNow").textContent = bot.status==="running" ? "当前 " + bot.memMB + " MB · 上限 " + bot.memLimit + " MB" : "未运行";
+  }catch(e){}
+}
+/* 按压/拖动查看某根柱子的明细卡 */
+let _scrubEl = null;
+function showTipAt(html, x, top){
+  const tip = $("#tip");
+  tip.innerHTML = html;
+  tip.style.left = Math.max(8, Math.min(innerWidth-280, x-90)) + "px";
+  tip.style.top = Math.max(8, top-12) + "px";
+  tip.style.transform = "translateY(-100%)";
+  tip.classList.add("show");
+}
+function hideTip(){ $("#tip").classList.remove("show"); }
+function chartScrub(el, clientX){
+  const r = el.getBoundingClientRect(), slots = el._slots; if(!slots) return;
+  const i = Math.max(0, Math.min(23, Math.floor((clientX-r.left)/r.width*24)));
+  const t = slots[i], b = el._map[t], kind = el._kind;
+  el.querySelectorAll(".cb").forEach(c=>c.classList.toggle("sel", +c.dataset.i===i));
+  let html;
+  if(!b) html = `<b>${fmtHourRange(t)}</b>\n这一小时暂无采样`;
+  else if(kind==="cpu") html = `<b>${fmtHourRange(t)}</b>\n平均 CPU　${b.cpuAvg}%\n峰值 CPU　${b.cpuMax}%\n采样 ${b.n} 次`;
+  else html = `<b>${fmtHourRange(t)}</b>\n平均内存　${fmtMemMB(b.memAvg)}\n峰值内存　${fmtMemMB(b.memMax)}\n采样 ${b.n} 次`;
+  showTipAt(html, clientX, r.top);
+}
+document.addEventListener("pointerdown", e=>{
+  const el = e.target.closest && e.target.closest(".chart");
+  if(el && el._slots){ _scrubEl = el; chartScrub(el, e.clientX); }
+});
+document.addEventListener("pointermove", e=>{ if(_scrubEl) chartScrub(_scrubEl, e.clientX); });
+["pointerup","pointercancel"].forEach(ev=>document.addEventListener(ev, ()=>{
+  if(_scrubEl){ _scrubEl = null; setTimeout(hideTip, 900); }
+}));
 async function loadRecentAudit(){
   try{
     const r = await api("/api/audit?limit=5");
@@ -757,6 +896,7 @@ async function renderDrawer(id, silent=false){
     ["登记时间", fmtTime(bot.createdAt)],
   ];
   $("#dKv").innerHTML = kv.map(([k,v])=>`<dt>${k}</dt><dd>${esc(v)}</dd>`).join("");
+  loadBotCharts(bot);
   const acts = $("#dActions"); acts.innerHTML = "";
   const mk = (label, cls, fn)=>{
     const b = document.createElement("button"); b.className = "btn "+cls; b.textContent = label;

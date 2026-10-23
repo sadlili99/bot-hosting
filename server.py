@@ -134,6 +134,13 @@ def init_db():
             result_note TEXT,
             resolved_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS metric_samples(
+            ts INTEGER NOT NULL,
+            bot_id TEXT NOT NULL,
+            cpu REAL NOT NULL,
+            mem_mb REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_samples ON metric_samples(bot_id, ts);
         """)
         # 迁移：文件内容同时存一份到数据库 BLOB，磁盘文件丢失也能按库恢复，
         # 保证重新登录/后端重启后文件还在（数据一律保留，不清库）。
@@ -693,6 +700,31 @@ def read_logs(row, tail=200):
         return [f"[读取日志失败：{e}]"]
 
 
+_LAST_SAMPLE = [0.0]
+
+
+def sample_metrics():
+    """每 30 秒采样一次主机与每个运行中 Bot 的真实 CPU/内存，保留 48 小时，
+    供总览与 Bot 详情的近 24 小时柱状图使用。"""
+    now = int(time.time())
+    samples = []
+    h = host_metrics()
+    samples.append((now, "", float(h["cpuPercent"]), float(h["memUsedMB"])))
+    with DB_LOCK, db() as c:
+        bots = [dict(r) for r in c.execute(
+            "SELECT * FROM bots WHERE status='running'").fetchall()]
+    for b in bots:
+        try:
+            _, cpu, rss = sync_bot_state(b)
+            samples.append((now, b["id"], float(cpu), float(rss)))
+        except Exception:
+            pass
+    with DB_LOCK, db() as c:
+        c.executemany("INSERT INTO metric_samples(ts,bot_id,cpu,mem_mb) VALUES(?,?,?,?)",
+                      samples)
+        c.execute("DELETE FROM metric_samples WHERE ts < ?", (now - 48 * 3600,))
+
+
 def monitor_loop():
     while True:
         try:
@@ -702,6 +734,12 @@ def monitor_loop():
             for row in rows:
                 try:
                     sync_bot_state(row)
+                except Exception:
+                    pass
+            if time.time() - _LAST_SAMPLE[0] >= 30:
+                _LAST_SAMPLE[0] = time.time()
+                try:
+                    sample_metrics()
                 except Exception:
                     pass
             due = []
@@ -890,6 +928,31 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200, {"user": u})
             if path == "/api/host":
                 return self.send_json(200, {"host": host_metrics()})
+            if path == "/api/metrics":
+                qs = parse_qs(parsed.query)
+                bot = (qs.get("bot") or ["host"])[0]
+                bid = "" if bot == "host" else bot
+                if bid and not get_bot(bid):
+                    return self.send_json(404, {"error": "Bot 不存在"})
+                since = int(time.time()) - 24 * 3600
+                with DB_LOCK, db() as c:
+                    srows = c.execute(
+                        "SELECT ts,cpu,mem_mb FROM metric_samples WHERE bot_id=? AND ts>=? "
+                        "ORDER BY ts", (bid, since)).fetchall()
+                buckets = {}
+                for r in srows:
+                    h0 = r["ts"] - r["ts"] % 3600
+                    b = buckets.setdefault(h0, {"t": h0, "cpu": [], "mem": []})
+                    b["cpu"].append(r["cpu"])
+                    b["mem"].append(r["mem_mb"])
+                out = [{"t": b["t"],
+                        "cpuAvg": round(sum(b["cpu"]) / len(b["cpu"]), 1),
+                        "cpuMax": round(max(b["cpu"]), 1),
+                        "memAvg": round(sum(b["mem"]) / len(b["mem"]), 1),
+                        "memMax": round(max(b["mem"]), 1),
+                        "n": len(b["cpu"])}
+                       for _, b in sorted(buckets.items())]
+                return self.send_json(200, {"bot": bot, "buckets": out})
             if path == "/api/bots":
                 with DB_LOCK, db() as c:
                     rows = [dict(r) for r in c.execute(
