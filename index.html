@@ -202,6 +202,9 @@ tbody tr:hover{background:var(--hover)}
 .prog.show{display:block}
 .prog i{display:block;height:100%;width:0;background:var(--blue);border-radius:99px;transition:width .25s}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.seg{display:flex;gap:4px;background:var(--field);border-radius:11px;padding:4px;margin-bottom:14px}
+.seg-btn{flex:1;border:0;background:transparent;padding:8px 0;border-radius:8px;font-size:13.5px;font-weight:600;color:var(--ink2);cursor:pointer}
+.seg-btn.on{background:var(--panel);color:var(--ink);box-shadow:0 1px 4px rgba(0,0,0,.12)}
 .scanbox{display:none;margin-top:6px}
 .scanbox.show{display:block;animation:viewin .3s both}
 .scan-item{display:flex;gap:9px;font-size:12.5px;line-height:1.55;padding:9px 11px;border:1px solid var(--line2);border-radius:10px;margin-bottom:7px;background:var(--panel2)}
@@ -395,7 +398,16 @@ tbody tr:hover{background:var(--hover)}
 
 <section class="modal" id="addModal">
   <h3>添加 Bot</h3>
-  <p class="sub">上传 .py 文件登记托管。文件存入服务器并做静态安全扫描；扫到高风险调用时必须勾选确认才能登记。登记后点「启动」才会真正运行。</p>
+  <p class="sub">上传 .py 文件，或粘贴 GitHub 文件链接导入。代码存入服务器并做静态安全扫描；扫到高风险调用时必须勾选确认才能登记。登记后点「启动」才会真正运行。</p>
+  <div class="seg" id="addTabs">
+    <button class="seg-btn on" data-tab="file">上传文件</button>
+    <button class="seg-btn" data-tab="github">GitHub 导入</button>
+  </div>
+  <div id="ghPane" class="hidden">
+    <div class="field"><label for="ghUrl">GitHub 文件链接</label><input class="input" id="ghUrl" placeholder="https://github.com/用户/仓库/blob/main/bot.py">
+    <p class="hint">也支持 raw.githubusercontent.com 直链。服务器会把该 .py 拉下来过同一道扫描；仅限公开文件，单个最大 10 MB，名称按文件名生成。</p></div>
+  </div>
+  <div id="filePane">
   <div class="drop" id="drop">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 16V5m0 0 4 4m-4-4L8 9"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
     <p id="dropTitle">拖入 .py 文件，或点击选择</p>
@@ -407,6 +419,7 @@ tbody tr:hover{background:var(--hover)}
   <div class="two">
     <div class="field"><label for="fCpu">CPU 上限（%）</label><input class="input" id="fCpu" type="number" value="50" min="5" max="400"><p class="hint">systemd 模式按 CPUQuota 执行；进程模式作配额登记与告警。</p></div>
     <div class="field"><label for="fMem">内存上限（MB）</label><input class="input" id="fMem" type="number" value="512" min="64" max="8192"><p class="hint">systemd 模式 MemoryMax；进程模式用地址空间上限。</p></div>
+  </div>
   </div>
   <label style="display:flex;gap:9px;align-items:center;font-size:13.5px;font-weight:550">崩溃自动重启 <button class="switch on" id="fAuto" aria-label="自动重启开关"></button></label>
   <div class="scanbox" id="scanBox"><div class="d-sec" style="margin-top:16px">扫描结果</div><div id="scanList"></div></div>
@@ -612,7 +625,7 @@ function auditTable(rows, mini=false){
   }</tbody></table></div>`;
 }
 function actionLabel(a){
-  return {setup:"创建管理员", login:"登录", login_failed:"登录失败", logout:"退出", upload:"上传 Bot",
+  return {setup:"创建管理员", login:"登录", login_failed:"登录失败", logout:"退出", upload:"上传 Bot", import:"GitHub 导入",
     start:"启动", stop:"停止", restart:"重启", delete:"删除", download:"下载源文件",
     auto_restart:"自动重启", exit:"进程退出", start_failed:"启动失败",
     optimize_request:"申请 AI 优化", optimize_resolve:"AI 优化处理结果"}[a] || a;
@@ -829,7 +842,51 @@ function setFile(f){
   if(!$("#fName").value) $("#fName").value = f.name.replace(/\.py$/i,"").replace(/[_-]+/g," ");
 }
 $("#fAuto").addEventListener("click", function(){ upAuto = !upAuto; this.classList.toggle("on", upAuto); });
+
+/* 添加方式切换：上传文件 / GitHub 导入 */
+let addMode = "file";
+document.querySelectorAll("#addTabs .seg-btn").forEach(b=>b.addEventListener("click", ()=>{
+  addMode = b.dataset.tab;
+  document.querySelectorAll("#addTabs .seg-btn").forEach(x=>x.classList.toggle("on", x===b));
+  $("#filePane").classList.toggle("hidden", addMode!=="file");
+  $("#ghPane").classList.toggle("hidden", addMode!=="github");
+  $("#confirmAdd").textContent = addMode==="file" ? "上传并登记" : "导入并登记";
+  $("#confirmAdd").disabled = addMode==="file" ? !upFile : !$("#ghUrl").value.trim();
+  $("#scanBox").classList.remove("show"); $("#riskLine").classList.remove("show");
+}));
+$("#ghUrl").addEventListener("input", ()=>{ if(addMode==="github") $("#confirmAdd").disabled = !$("#ghUrl").value.trim(); });
+function showScanFindings(data){
+  const list = $("#scanList"); list.innerHTML = "";
+  (data.findings||[]).forEach(f=>{
+    const el = document.createElement("div"); el.className = "scan-item";
+    el.innerHTML = `<span class="sev ${f.severity==="high"?"high":"mid"}">${f.severity==="high"?"高风险":"注意"}</span><span><b>${esc(f.label)}</b> · 第 ${f.line} 行<br><code>${esc(f.code)}</code></span>`;
+    list.appendChild(el);
+  });
+  $("#scanBox").classList.add("show");
+  $("#riskLine").classList.add("show");
+  $("#riskCheck").checked = false;
+}
+async function doImport(){
+  const btn = $("#confirmAdd"); btn.disabled = true; btn.textContent = "正在从 GitHub 拉取…";
+  try{
+    const r = await api("/api/bots/import-github", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({url: $("#ghUrl").value.trim(), autoRestart: upAuto, confirmRisk: $("#riskCheck").checked})});
+    const data = await r.json().catch(()=>({}));
+    if(r.status === 201){
+      toast("「"+data.bot.name+"」已从 GitHub 导入，去列表里点启动即可运行");
+      $("#ghUrl").value = ""; $("#scanBox").classList.remove("show"); $("#riskLine").classList.remove("show");
+      closeLayers(); switchView("bots"); refreshAll();
+    } else if(r.status === 422 && data.requiresConfirmation){
+      showScanFindings(data);
+      toast("扫到高风险项，确认后重新点导入", "err");
+    } else {
+      toast(data.error || ("导入失败 "+r.status), "err");
+    }
+  }catch(e){ toast("导入失败：连不上后端", "err"); }
+  btn.textContent = "导入并登记"; btn.disabled = !$("#ghUrl").value.trim();
+}
 $("#confirmAdd").addEventListener("click", ()=>{
+  if(addMode === "github"){ doImport(); return; }
   if(!upFile) return;
   const xhr = new XMLHttpRequest();
   xhr.open("POST", apiUrl("/api/bots"));

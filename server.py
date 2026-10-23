@@ -33,7 +33,9 @@ import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import urlparse, parse_qs, unquote, quote
+import urllib.request
+import urllib.error
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("BOT_HOST_DATA", BASE_DIR / "data")).resolve()
@@ -723,6 +725,63 @@ def monitor_loop():
 
 # ---------------- HTTP ----------------
 
+def register_bot(u, name, base, raw, code, cpu, mem, auto_restart, confirm_risk, action):
+    """登记一个 Bot（上传与 GitHub 导入共用）：扫描→写文件→入库→审计。
+    返回 (http_status, payload)。"""
+    findings = scan_code(code)
+    high = [f for f in findings if f["severity"] == "high"]
+    if high and not confirm_risk:
+        return 422, {"error": "扫描发现高风险调用，需要确认后才能登记",
+                     "findings": findings, "requiresConfirmation": True}
+    bot_id = uuid.uuid4().hex[:12]
+    d = bot_dir(bot_id)
+    d.mkdir(parents=True, exist_ok=True)
+    stored = "main.py"
+    (d / stored).write_bytes(raw)
+    sha = hashlib.sha256(raw).hexdigest()
+    with DB_LOCK, db() as c:
+        c.execute(
+            "INSERT INTO bots(id,name,filename,stored_name,size,sha256,cpu_limit,mem_limit,"
+            "auto_restart,scan_json,status,file_blob,created_at,updated_at) VALUES(?,?,?,?,?,?,"
+            "?,?,?,?,'stopped',?,?,?)",
+            (bot_id, name, base, stored, len(raw), sha, cpu, mem,
+             1 if auto_restart else 0, json.dumps(findings, ensure_ascii=False),
+             raw, now_iso(), now_iso()))
+    audit(u["username"], action, name,
+          f"{base} {len(raw)}B risks={len(findings)} confirmed={confirm_risk}")
+    return 201, {"bot": serialize_bot(get_bot(bot_id))}
+
+
+def resolve_github_url(url):
+    """把 GitHub 文件页/raw 链接统一成 raw 下载地址；只允许 github 域名与 .py 文件。
+    返回 (raw_url, filename, error)。"""
+    try:
+        p = urlparse(url)
+    except Exception:
+        return None, None, "链接格式不正确"
+    if p.scheme != "https" or not p.hostname:
+        return None, None, "只支持 https 链接"
+    host = p.hostname.lower()
+    parts = [unquote(x) for x in p.path.split("/") if x]
+    if host == "raw.githubusercontent.com":
+        if len(parts) < 4:
+            return None, None, "链接不完整"
+        base = parts[-1]
+        if not base.lower().endswith(".py"):
+            return None, None, "只接受 .py 文件"
+        return url, base, None
+    if host == "github.com":
+        if len(parts) < 5 or parts[2] not in ("blob", "raw"):
+            return None, None, "请粘贴 GitHub 文件页链接（…/blob/分支/路径.py）或 raw 链接"
+        owner, repo, branch = parts[0], parts[1], parts[3]
+        rest = "/".join(quote(x) for x in parts[4:])
+        base = parts[-1]
+        if not base.lower().endswith(".py"):
+            return None, None, "只接受 .py 文件"
+        return f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{rest}", base, None
+    return None, None, "只支持 github.com / raw.githubusercontent.com 的链接"
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "LiyuanHost/2.0"
     protocol_version = "HTTP/1.1"
@@ -961,6 +1020,8 @@ class Handler(BaseHTTPRequestHandler):
                                       {"Set-Cookie": "bot_host_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"})
             if path == "/api/bots":
                 return self.create_bot(u)
+            if path == "/api/bots/import-github":
+                return self.import_github(u)
             m = re.fullmatch(r"/api/bots/([0-9a-f]+)/optimize-request", path)
             if m:
                 bot_id = m.group(1)
@@ -1064,29 +1125,38 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(400, {"error": "文件不是 UTF-8 文本"})
         if not name:
             name = base[:-3].replace("_", " ").replace("-", " ").strip() or "未命名 Bot"
-        findings = scan_code(code)
-        high = [f for f in findings if f["severity"] == "high"]
-        if high and not confirm_risk:
-            return self.send_json(422, {
-                "error": "扫描发现高风险调用，需要确认后才能登记",
-                "findings": findings, "requiresConfirmation": True})
-        bot_id = uuid.uuid4().hex[:12]
-        d = bot_dir(bot_id)
-        d.mkdir(parents=True, exist_ok=True)
-        stored = "main.py"
-        (d / stored).write_bytes(raw)
-        sha = hashlib.sha256(raw).hexdigest()
-        with DB_LOCK, db() as c:
-            c.execute(
-                "INSERT INTO bots(id,name,filename,stored_name,size,sha256,cpu_limit,mem_limit,"
-                "auto_restart,scan_json,status,file_blob,created_at,updated_at) VALUES(?,?,?,?,?,?,"
-                "?,?,?,?,'stopped',?,?,?)",
-                (bot_id, name, base, stored, len(raw), sha, cpu, mem,
-                 1 if auto_restart else 0, json.dumps(findings, ensure_ascii=False),
-                 raw, now_iso(), now_iso()))
-        audit(u["username"], "upload", name,
-              f"{base} {len(raw)}B risks={len(findings)} confirmed={confirm_risk}")
-        return self.send_json(201, {"bot": serialize_bot(get_bot(bot_id))})
+        status, payload = register_bot(u, name, base, raw, code, cpu, mem,
+                                       auto_restart, confirm_risk, "upload")
+        return self.send_json(status, payload)
+
+    def import_github(self, u):
+        data = self.read_json()
+        url = (data.get("url") or "").strip()
+        auto_restart = bool(data.get("autoRestart", True))
+        confirm_risk = bool(data.get("confirmRisk"))
+        raw_url, base, err = resolve_github_url(url)
+        if err:
+            return self.send_json(400, {"error": err})
+        try:
+            req = urllib.request.Request(raw_url, headers={"User-Agent": "liyuan-bot-host"})
+            with urllib.request.urlopen(req, timeout=25) as r:
+                raw = r.read(MAX_UPLOAD + 1)
+        except Exception as e:
+            return self.send_json(502, {"error": f"从 GitHub 拉取失败：{e}"})
+        if not raw:
+            return self.send_json(400, {"error": "文件为空"})
+        if len(raw) > MAX_UPLOAD:
+            return self.send_json(413, {"error": "文件超过 10 MB 上限"})
+        if b"\x00" in raw:
+            return self.send_json(400, {"error": "文件不是文本 Python 代码"})
+        try:
+            code = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return self.send_json(400, {"error": "文件不是 UTF-8 文本"})
+        name = base[:-3].replace("_", " ").replace("-", " ").strip() or "未命名 Bot"
+        status, payload = register_bot(u, name, base, raw, code, 50, 512,
+                                       auto_restart, confirm_risk, "import")
+        return self.send_json(status, payload)
 
     def do_DELETE(self):
         parsed = urlparse(self.path)
