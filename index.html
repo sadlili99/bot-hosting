@@ -190,6 +190,7 @@ tbody tr:hover{background:var(--hover)}
 .err-card pre{white-space:pre-wrap;word-break:break-all;font-size:12px;line-height:1.55;margin:0;max-height:220px;overflow:auto;font-family:ui-monospace,Menlo,Consolas,monospace}
 .err-card .row{display:flex;gap:8px;flex-wrap:wrap}
 .code-editor{width:100%;box-sizing:border-box;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.55;background:var(--field);color:var(--ink);border:1px solid var(--line2);border-radius:10px;padding:10px;resize:vertical;tab-size:2}
+.fn a{color:inherit;text-decoration:underline;text-underline-offset:2px}
 .mini-meter{width:74px;height:5px;border-radius:99px;background:var(--field);overflow:hidden;margin-top:5px}
 .mini-meter i{display:block;height:100%;background:var(--blue);border-radius:99px;transition:width .8s var(--ease)}
 .empty{padding:52px 20px;text-align:center;color:var(--ink2)}
@@ -334,6 +335,7 @@ tbody tr:hover{background:var(--hover)}
         <button data-mode="dark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 13.5A8.5 8.5 0 1 1 10.5 4a7 7 0 0 0 9.5 9.5Z"/></svg>深色</button>
         <button data-mode="auto">自动</button>
       </div>
+      <button class="btn btn-default" id="openWrite">在线写代码</button>
       <button class="btn btn-primary" id="openAdd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>添加 Bot</button>
     </header>
 
@@ -444,10 +446,17 @@ tbody tr:hover{background:var(--hover)}
 
 <section class="modal" id="addModal">
   <h3>添加 Bot</h3>
-  <p class="sub">上传 .py 文件，或粘贴 GitHub 文件链接导入。代码存入服务器并做静态安全扫描；扫到高风险调用时必须勾选确认才能登记。登记后点「启动」才会真正运行。</p>
+  <p class="sub">上传 .py 文件、粘贴 GitHub 链接导入，或者直接在网页里写代码上传并启动。代码存入服务器并做静态安全扫描；扫到高风险调用时必须勾选确认才能登记。</p>
   <div class="seg" id="addTabs">
     <button class="seg-btn on" data-tab="file">上传文件</button>
     <button class="seg-btn" data-tab="github">GitHub 导入</button>
+    <button class="seg-btn" data-tab="write">在线编写</button>
+  </div>
+  <div id="writePane" class="hidden">
+    <div class="field"><label for="wName">Bot 名称</label><input class="input" id="wName" placeholder="例如：签到助手（留空按文件名生成）"></div>
+    <div class="field"><label for="wFile">文件名</label><input class="input" id="wFile" value="bot.py"></div>
+    <div class="field"><label for="wCode">Python 代码（在网页里直接写）</label><textarea id="wCode" class="code-editor" rows="14" spellcheck="false" placeholder="import time&#10;while True:&#10;    print('hello')&#10;    time.sleep(10)"></textarea>
+    <p class="hint">点「上传并启动」后，代码直接存到服务器、过同一道扫描，登记完马上启动运行，不用先传文件。CPU / 内存上限与自动重启沿用下面那组设置。</p></div>
   </div>
   <div id="ghPane" class="hidden">
     <div class="field"><label for="ghUrl">GitHub 文件链接</label><input class="input" id="ghUrl" placeholder="https://github.com/用户/仓库/blob/main/bot.py">
@@ -873,7 +882,7 @@ addEventListener("keydown", e=>{ if(e.key==="Escape") closeLayers(); });
 async function renderDrawer(id, silent=false){
   const bot = bots.find(b=>b.id===id); if(!bot) return;
   $("#dName").textContent = bot.name;
-  $("#dFile").textContent = bot.filename;
+  $("#dFile").innerHTML = `<a href="${apiUrl("/api/bots/"+id+"/download")}" rel="noopener" title="下载这份代码">${esc(bot.filename)}</a>`;
   $("#dBadge").innerHTML = badge(bot.status) + (bot.lastError ? ` <span class="dim" style="margin-left:6px">${esc(bot.lastError)}</span>` : "");
   const kv = [
     ["进程", bot.status==="running" ? (bot.manager==="systemd" ? "systemd 服务" : "独立进程")+" · PID "+(bot.pid||"—") : "—"],
@@ -1025,17 +1034,23 @@ function setFile(f){
 }
 $("#fAuto").addEventListener("click", function(){ upAuto = !upAuto; this.classList.toggle("on", upAuto); });
 
-/* 添加方式切换：上传文件 / GitHub 导入 */
+/* 添加方式切换：上传文件 / GitHub 导入 / 在线编写 */
 let addMode = "file";
 document.querySelectorAll("#addTabs .seg-btn").forEach(b=>b.addEventListener("click", ()=>{
   addMode = b.dataset.tab;
   document.querySelectorAll("#addTabs .seg-btn").forEach(x=>x.classList.toggle("on", x===b));
   $("#filePane").classList.toggle("hidden", addMode!=="file");
   $("#ghPane").classList.toggle("hidden", addMode!=="github");
-  $("#confirmAdd").textContent = addMode==="file" ? "上传并登记" : "导入并登记";
-  $("#confirmAdd").disabled = addMode==="file" ? !upFile : !$("#ghUrl").value.trim();
+  $("#writePane").classList.toggle("hidden", addMode!=="write");
+  $("#confirmAdd").textContent = addMode==="file" ? "上传并登记" : addMode==="github" ? "导入并登记" : "上传并启动";
+  $("#confirmAdd").disabled = addMode==="file" ? !upFile : addMode==="github" ? !$("#ghUrl").value.trim() : !$("#wCode").value.trim();
   $("#scanBox").classList.remove("show"); $("#riskLine").classList.remove("show");
 }));
+$("#wCode").addEventListener("input", ()=>{ if(addMode==="write") $("#confirmAdd").disabled = !$("#wCode").value.trim(); });
+$("#openWrite").addEventListener("click", ()=>{
+  $("#mask").classList.add("show"); $("#addModal").classList.add("show");
+  document.querySelector('#addTabs .seg-btn[data-tab="write"]').click();
+});
 $("#ghUrl").addEventListener("input", ()=>{ if(addMode==="github") $("#confirmAdd").disabled = !$("#ghUrl").value.trim(); });
 function showScanFindings(data){
   const list = $("#scanList"); list.innerHTML = "";
@@ -1051,24 +1066,42 @@ function showScanFindings(data){
 async function doImport(){
   const btn = $("#confirmAdd"); btn.disabled = true; btn.textContent = "正在从 GitHub 拉取…";
   try{
-    const r = await api("/api/bots/import-github", {method:"POST", headers:{"Content-Type":"application/json"},
+    const data = await api("/api/bots/import-github", {method:"POST",
       body: JSON.stringify({url: $("#ghUrl").value.trim(), autoRestart: upAuto, confirmRisk: $("#riskCheck").checked})});
-    const data = await r.json().catch(()=>({}));
-    if(r.status === 201){
-      toast("「"+data.bot.name+"」已从 GitHub 导入，去列表里点启动即可运行");
-      $("#ghUrl").value = ""; $("#scanBox").classList.remove("show"); $("#riskLine").classList.remove("show");
-      closeLayers(); switchView("bots"); refreshAll();
-    } else if(r.status === 422 && data.requiresConfirmation){
-      showScanFindings(data);
-      toast("扫到高风险项，确认后重新点导入", "err");
-    } else {
-      toast(data.error || ("导入失败 "+r.status), "err");
-    }
-  }catch(e){ toast("导入失败：连不上后端", "err"); }
+    toast("「"+data.bot.name+"」已从 GitHub 导入，去列表里点启动即可运行");
+    $("#ghUrl").value = ""; $("#scanBox").classList.remove("show"); $("#riskLine").classList.remove("show");
+    closeLayers(); switchView("bots"); refreshAll();
+  }catch(e){
+    if(e.status === 422 && e.data && e.data.findings){ showScanFindings(e.data); toast("扫到高风险项，确认后重新点导入", "err"); }
+    else toast(e.message || "导入失败", "err");
+  }
   btn.textContent = "导入并登记"; btn.disabled = !$("#ghUrl").value.trim();
+}
+/* 在线编写：网页里手动写代码 → 上传登记 → 马上启动；建好后直接打开它的详情，
+   详情里点文件名就能下载这份手动写的代码 */
+async function doWrite(){
+  const btn = $("#confirmAdd"); btn.disabled = true; btn.textContent = "正在上传并启动…";
+  try{
+    const data = await api("/api/bots/create-code", {method:"POST", body: JSON.stringify({
+      name: $("#wName").value.trim(),
+      filename: $("#wFile").value.trim() || "bot.py",
+      content: $("#wCode").value,
+      cpuLimit: parseInt($("#fCpu").value) || 50,
+      memLimit: parseInt($("#fMem").value) || 512,
+      autoRestart: upAuto, confirmRisk: $("#riskCheck").checked})});
+    toast(data.started ? `「${data.bot.name}」已上传并启动，点文件名可下载` : `「${data.bot.name}」已登记，但启动失败：${data.startMessage || ""}，去详情里手动启动`);
+    $("#wCode").value = ""; $("#wName").value = "";
+    $("#scanBox").classList.remove("show"); $("#riskLine").classList.remove("show");
+    closeLayers(); switchView("bots"); await refreshAll(); openDrawer(data.bot.id);
+  }catch(e){
+    if(e.status === 422 && e.data && e.data.findings){ showScanFindings(e.data); toast("扫到高风险项，确认后重新点上传并启动", "err"); }
+    else toast(e.message || "上传失败", "err");
+  }
+  btn.textContent = "上传并启动"; btn.disabled = !$("#wCode").value.trim();
 }
 $("#confirmAdd").addEventListener("click", ()=>{
   if(addMode === "github"){ doImport(); return; }
+  if(addMode === "write"){ doWrite(); return; }
   if(!upFile) return;
   const xhr = new XMLHttpRequest();
   xhr.open("POST", apiUrl("/api/bots"));

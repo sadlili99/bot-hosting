@@ -1167,6 +1167,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.create_bot(u)
             if path == "/api/bots/import-github":
                 return self.import_github(u)
+            if path == "/api/bots/create-code":
+                return self.create_code(u)
             m = re.fullmatch(r"/api/bots/([0-9a-f]+)/optimize-request", path)
             if m:
                 bot_id = m.group(1)
@@ -1341,6 +1343,45 @@ class Handler(BaseHTTPRequestHandler):
         status, payload = register_bot(u, name, base, raw, code, 50, 512,
                                        auto_restart, confirm_risk, "import")
         return self.send_json(status, payload)
+
+    def create_code(self, u):
+        """网页端在线写代码：手动写入 .py → 直接登记 → 马上启动。"""
+        data = self.read_json()
+        name = (data.get("name") or "").strip()
+        base = Path((data.get("filename") or "bot.py").strip()).name
+        if not base.lower().endswith(".py"):
+            return self.send_json(400, {"error": "只接受 .py 文件"})
+        content = data.get("content")
+        if not isinstance(content, str) or not content.strip():
+            return self.send_json(400, {"error": "代码不能为空"})
+        raw = content.encode("utf-8")
+        if b"\x00" in raw:
+            return self.send_json(400, {"error": "代码含 NUL 字节"})
+        if len(raw) > MAX_UPLOAD:
+            return self.send_json(413, {"error": "代码超过 10 MB 上限"})
+        try:
+            cpu = int(data.get("cpuLimit", 50))
+            mem = int(data.get("memLimit", 512))
+        except (TypeError, ValueError):
+            return self.send_json(400, {"error": "资源上限格式不正确"})
+        cpu = max(5, min(400, cpu))
+        mem = max(64, min(8192, mem))
+        auto_restart = bool(data.get("autoRestart", True))
+        confirm_risk = bool(data.get("confirmRisk"))
+        if not name:
+            name = base[:-3].replace("_", " ").replace("-", " ").strip() or "未命名 Bot"
+        status, payload = register_bot(u, name, base, raw, content, cpu, mem,
+                                       auto_restart, confirm_risk, "create_code")
+        if status != 201:
+            return self.send_json(status, payload)
+        bot_id = payload["bot"]["id"]
+        ok, msg = start_bot(bot_id, u["username"])
+        payload = dict(payload)
+        payload["started"] = ok
+        payload["startMessage"] = msg
+        if ok:
+            audit(u["username"], "start", name, "在线编写创建后自动启动")
+        return self.send_json(201, payload)
 
     def do_DELETE(self):
         parsed = urlparse(self.path)
