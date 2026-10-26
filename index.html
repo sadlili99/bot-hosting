@@ -432,7 +432,7 @@ tbody tr:hover{background:var(--hover)}
     <div id="dErrCard" style="display:none"></div>
     <div class="d-sec">安全扫描</div>
     <div id="dScan"></div>
-    <div class="d-sec">设置（代码和上限都在这里调，调完点保存并重启，一次生效）</div>
+    <div class="d-sec" id="dSetSection">设置（代码和上限都在这里调，调完点保存并重启，一次生效）</div>
     <div class="field"><label for="dCode">代码编辑</label><textarea id="dCode" class="code-editor" rows="16" spellcheck="false" placeholder="点开 Bot 详情时自动载入当前代码"></textarea>
     <p class="hint" id="dCodeNote"></p></div>
     <div class="two" style="margin-top:10px">
@@ -831,6 +831,7 @@ function renderBots(){
           : `<button class="icon-btn" data-act="start" title="启动"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.8v14.4L19 12 7 4.8Z"/></svg></button>`}
         <button class="icon-btn" data-act="optimize" title="AI 优化：提交后小梨读取代码和日志，修好或说明原因"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.7 4.6L18 9.2l-4.3 1.6L12 15.5l-1.7-4.7L6 9.2l4.3-1.6L12 3Z"/><path d="M19 15.5l.8 2.2 2.2.8-2.2.8L19 21.5l-.8-2.2-2.2-.8 2.2-.8.8-2.2Z"/></svg></button>
         <button class="icon-btn" data-act="logs" title="日志"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 4h14v16H5zM9 9h6M9 13h6"/></svg></button>
+        <button class="icon-btn" data-act="settings" title="设置：改代码、改 CPU/内存上限，调完重启"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5h.1a1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg></button>
         <button class="icon-btn" data-act="detail" title="详情"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg></button>
         <button class="icon-btn danger" data-act="del" title="删除"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m3 0-1 13a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 7"/></svg></button>
       </div></td>`;
@@ -854,6 +855,7 @@ async function botAction(id, act){
   }
   if(act === "logs"){ logBotId = id; switchView("logs"); renderLogBots(); loadLogs(); return; }
   if(act === "detail"){ openDrawer(id); return; }
+  if(act === "settings"){ openSettings(id); return; }
   if(act === "del"){
     const ok = await confirmBox("删除这个 Bot？", `将停止「${bot.name}」并删除它的源文件与日志，数据库记录一并移除。此操作不可恢复。`, "确认删除");
     if(!ok) return;
@@ -874,6 +876,14 @@ function openDrawer(id){
   $("#mask").classList.add("show");
   $("#drawer").classList.add("show");
   renderDrawer(id);
+}
+/* 列表里的设置按钮：打开面板并直接滚到设置区，改代码、改上限都在这里 */
+function openSettings(id){
+  openDrawer(id);
+  setTimeout(()=>{
+    const sec = document.getElementById("dSetSection");
+    if(sec) sec.scrollIntoView({behavior:"smooth", block:"start"});
+  }, 80);
 }
 function closeLayers(){
   $("#mask").classList.remove("show");
