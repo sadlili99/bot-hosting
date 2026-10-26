@@ -1233,6 +1233,36 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200, {"ok": True, "restarted": restarted,
                                             "size": len(raw),
                                             "message": "已保存并重启" if restarted else "已保存"})
+            m = re.fullmatch(r"/api/bots/([0-9a-f]+)/limits", path)
+            if m:
+                bot_id = m.group(1)
+                row = get_bot(bot_id)
+                if not row:
+                    return self.send_json(404, {"error": "Bot 不存在"})
+                data = self.read_json()
+                try:
+                    cpu = int(data.get("cpuLimit"))
+                    mem = int(data.get("memLimit"))
+                except (TypeError, ValueError):
+                    return self.send_json(400, {"error": "资源上限格式不正确"})
+                cpu = max(5, min(400, cpu))
+                mem = max(64, min(8192, mem))
+                update_bot(bot_id, cpu_limit=cpu, mem_limit=mem)
+                audit(u["username"], "edit_limits", row["name"],
+                      f"cpu={cpu}% mem={mem}MB")
+                restarted = False
+                if row["status"] == "running" and data.get("restart"):
+                    try:
+                        stop_bot(bot_id, u["username"])
+                        start_bot(bot_id, u["username"])
+                        restarted = True
+                    except Exception as e:
+                        return self.send_json(200, {"ok": True, "restarted": False,
+                                                    "warn": f"已保存，但重启失败：{e}"})
+                return self.send_json(200, {"ok": True, "restarted": restarted,
+                                            "cpuLimit": cpu, "memLimit": mem,
+                                            "message": "已保存并重启，上限已生效" if restarted
+                                            else "已保存，下次启动时生效"})
             m = re.fullmatch(r"/api/optimize-requests/(\d+)/resolve", path)
             if m:
                 data = self.read_json()

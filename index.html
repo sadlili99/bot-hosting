@@ -439,6 +439,16 @@ tbody tr:hover{background:var(--hover)}
       <button class="btn btn-primary" id="dCodeSaveRestart">保存并重启</button>
       <span class="dim" id="dCodeNote"></span>
     </div>
+    <div class="d-sec">资源上限（改完必须重启才生效）</div>
+    <div class="two">
+      <div class="field"><label for="dCpu">CPU 上限（%）</label><input class="input" id="dCpu" type="number" min="5" max="400"></div>
+      <div class="field"><label for="dMem">内存上限（MB）</label><input class="input" id="dMem" type="number" min="64" max="8192"></div>
+    </div>
+    <div class="d-actions" style="margin-top:8px">
+      <button class="btn btn-default" id="dLimSave">保存上限</button>
+      <button class="btn btn-primary" id="dLimSaveRestart">保存并重启</button>
+      <span class="dim">整机 1855MB；CPU、内存上限是启动时定死的，改完必须重启正在跑的 Bot 才生效</span>
+    </div>
     <div class="d-sec">最新日志</div>
     <div class="terminal" id="dLog"></div>
   </div>
@@ -506,7 +516,7 @@ const $$ = s => [...document.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 let API_BASE = localStorage.getItem("bot-host-api-base") || "";
 let me = null, bots = [], hostInfo = null, curView = "overview";
-let botFilter = "all", botKeyword = "", logBotId = "", logAuto = true, drawerBotId = null, editorBotId = null;
+let botFilter = "all", botKeyword = "", logBotId = "", logAuto = true, drawerBotId = null, editorBotId = null, limitBotId = null;
 
 function apiUrl(p){ return API_BASE.replace(/\/$/,"") + p; }
 async function api(path, opts={}){
@@ -874,7 +884,7 @@ function closeLayers(){
   $("#mask").classList.remove("show");
   $("#drawer").classList.remove("show");
   $$(".modal").forEach(m => m.classList.remove("show"));
-  drawerBotId = null; editorBotId = null;
+  drawerBotId = null; editorBotId = null; limitBotId = null;
 }
 $("#mask").addEventListener("click", closeLayers);
 $("#closeDrawer").addEventListener("click", closeLayers);
@@ -914,6 +924,12 @@ async function renderDrawer(id, silent=false){
     };
     $("#dErrReport").onclick = async ()=>{ await botAction(id, "optimize"); renderDrawer(id); };
   } else { es.style.display = "none"; ec.style.display = "none"; }
+  /* 资源上限输入框：只在切换 Bot 时填一次，3 秒静默刷新不覆盖正在改的数字 */
+  if(limitBotId !== id){
+    limitBotId = id;
+    $("#dCpu").value = bot.cpuLimit;
+    $("#dMem").value = bot.memLimit;
+  }
   /* 代码编辑：只在切换 Bot 时载入一次，3 秒静默刷新不覆盖正在敲的字 */
   if(editorBotId !== id){
     editorBotId = id;
@@ -981,6 +997,23 @@ async function saveCode(restart){
 }
 $("#dCodeSave").addEventListener("click", ()=>saveCode(false));
 $("#dCodeSaveRestart").addEventListener("click", ()=>saveCode(true));
+
+/* ---------- 资源上限编辑：保存后必须重启才生效 ---------- */
+async function saveLimits(restart){
+  if(!drawerBotId) return;
+  const cpuLimit = parseInt($("#dCpu").value), memLimit = parseInt($("#dMem").value);
+  if(!(cpuLimit >= 5 && cpuLimit <= 400) || !(memLimit >= 64 && memLimit <= 8192)){
+    toast("CPU 上限 5–400%，内存上限 64–8192MB", "err"); return;
+  }
+  try{
+    const r = await api(`/api/bots/${drawerBotId}/limits`, {method:"POST",
+      body: JSON.stringify({cpuLimit, memLimit, restart})});
+    toast(r.message || "已保存");
+    renderDrawer(drawerBotId);
+  }catch(e){ toast("保存失败：" + e.message, "err"); }
+}
+$("#dLimSave").addEventListener("click", ()=>saveLimits(false));
+$("#dLimSaveRestart").addEventListener("click", ()=>saveLimits(true));
 
 /* ---------- 日志视图 ---------- */
 function renderLogBots(){
