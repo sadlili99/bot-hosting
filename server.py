@@ -151,6 +151,16 @@ def init_db():
             c.execute("ALTER TABLE bots ADD COLUMN missing_module TEXT")
         if "missing_package" not in cols:
             c.execute("ALTER TABLE bots ADD COLUMN missing_package TEXT")
+        # 报错去重：记最后一次报错的签名、截取片段、重复次数与事件键，
+        # 自动重启反复报同一个错时只记一次签名、次数累加，不全文刷屏。
+        if "error_sig" not in cols:
+            c.execute("ALTER TABLE bots ADD COLUMN error_sig TEXT")
+        if "error_tail" not in cols:
+            c.execute("ALTER TABLE bots ADD COLUMN error_tail TEXT")
+        if "error_repeat" not in cols:
+            c.execute("ALTER TABLE bots ADD COLUMN error_repeat INTEGER DEFAULT 0")
+        if "error_event" not in cols:
+            c.execute("ALTER TABLE bots ADD COLUMN error_event TEXT")
 init_db()
 
 
@@ -573,6 +583,7 @@ def sync_bot_state(row):
                 update_bot(bot_id, status="error", pid=None,
                            last_exit_code=int(code) if code.lstrip("-").isdigit() else None,
                            last_error="进程异常退出（systemd 已按策略处理）")
+                record_error(bot_id, "s" + str(show.get("NRestarts", "")))
                 with STATE_LOCK:
                     SAMPLES.pop(bot_id, None)
             elif active == "inactive":
@@ -606,6 +617,7 @@ def sync_bot_state(row):
                             update_bot(bot_id, status="error", pid=None, last_exit_code=rc,
                                        consec_failures=fails,
                                        last_error=f"异常退出（码 {rc}），已停止自动重启")
+                        record_error(bot_id, f"p{fails}")
                     audit("system", "exit", row["name"], f"exit_code={rc}")
             elif proc_alive(row["pid"]):
                 ticks, rss = proc_metrics(row["pid"])
@@ -614,6 +626,12 @@ def sync_bot_state(row):
             elif row["status"] == "running":
                 update_bot(bot_id, status="error", pid=None, last_error="进程已不存在（后端重启后未恢复）")
     row2 = get_bot(bot_id)
+    # 一旦确认在运行，旧的报错记录与连续失败计数清零：下一次崩溃从 1 重新数。
+    if row2 and row2["status"] == "running" and (
+            row2["consec_failures"] or row2.get("error_sig")):
+        update_bot(bot_id, consec_failures=0, error_sig=None, error_tail=None,
+                   error_repeat=0, error_event=None)
+        row2 = get_bot(bot_id)
     return row2, cpu_pct, rss
 
 
@@ -648,6 +666,39 @@ def detect_missing_lib(row):
     return root, MODULE_PACKAGE_MAP.get(root, root)
 
 
+ERR_LINE_RE = re.compile(r"([A-Za-z_][\w.]*?(?:Error|Exception|Interrupt|Exit|Failure))\s*:\s*(.*)")
+
+
+def extract_error(lines):
+    """从日志里截取报错：签名取最后一条异常行，片段取最后 12 行（不全文刷屏）。"""
+    sig = None
+    for ln in lines:
+        m = ERR_LINE_RE.search(ln)
+        if m:
+            sig = (m.group(1) + ": " + m.group(2).strip())[:200]
+    tail_lines = [ln for ln in lines if ln.strip()][-12:]
+    tail = "\n".join(tail_lines)[-800:]
+    return sig, tail
+
+
+def record_error(bot_id, event_key):
+    """一次新的崩溃事件：同签名则重复次数 +1，否则重置为 1；同一事件不重复计。"""
+    row = get_bot(bot_id)
+    if not row or row.get("error_event") == event_key:
+        return
+    try:
+        lines = read_logs(row, 80)
+    except Exception:
+        lines = []
+    sig, tail = extract_error(lines)
+    if sig and sig == row.get("error_sig"):
+        rep = (row.get("error_repeat") or 0) + 1
+    else:
+        rep = 1
+    update_bot(bot_id, error_sig=sig, error_tail=tail, error_repeat=rep,
+               error_event=event_key)
+
+
 def serialize_bot(row):
     row, cpu_pct, rss = sync_bot_state(row)
     # 异常时自动识别缺库（只诊断展示，安装与否由点「AI 优化」后小梨审核处理）
@@ -672,6 +723,8 @@ def serialize_bot(row):
         "cpuPercent": cpu_pct, "memMB": rss,
         "uptimeSeconds": up,
         "lastExitCode": row["last_exit_code"], "lastError": row["last_error"],
+        "errorSig": row.get("error_sig"), "errorTail": row.get("error_tail"),
+        "errorRepeat": row.get("error_repeat") or 0,
         "missingModule": row.get("missing_module"), "missingPackage": row.get("missing_package"),
         "restartCount": row["restart_count"], "totalStarts": row["total_starts"],
         "createdAt": row["created_at"], "updatedAt": row["updated_at"],
@@ -701,6 +754,7 @@ def read_logs(row, tail=200):
 
 
 _LAST_SAMPLE = [0.0]
+_LAST_AUTO_AUDIT = {}
 
 
 def sample_metrics():
@@ -755,7 +809,12 @@ def monitor_loop():
                     rr = get_bot(bid)
                     if rr:
                         update_bot(bid, restart_count=rr["restart_count"] + 1)
-                    audit("system", "auto_restart", r["name"])
+                    # 同一个错反复自动重启时，审计只记一次（30 分钟内同签名不刷屏）
+                    _sig = r.get("error_sig") or ""
+                    _last = _LAST_AUTO_AUDIT.get(bid)
+                    if not _last or _last[0] != _sig or time.time() - _last[1] > 1800:
+                        _LAST_AUTO_AUDIT[bid] = (_sig, time.time())
+                        audit("system", "auto_restart", r["name"])
         except Exception:
             pass
         time.sleep(2)
@@ -1002,6 +1061,29 @@ class Handler(BaseHTTPRequestHandler):
                 if self.command != "HEAD":
                     self.wfile.write(data)
                 return
+            m = re.fullmatch(r"/api/bots/([0-9a-f]+)/file", path)
+            if m:
+                row = get_bot(m.group(1))
+                if not row:
+                    return self.send_json(404, {"error": "Bot 不存在"})
+                script = bot_script(row)
+                data = None
+                if script.exists():
+                    data = script.read_bytes()
+                else:
+                    with DB_LOCK, db() as c:
+                        brow = c.execute("SELECT file_blob FROM bots WHERE id=?",
+                                         (row["id"],)).fetchone()
+                    if brow and brow["file_blob"]:
+                        data = bytes(brow["file_blob"])
+                if data is None:
+                    return self.send_json(404, {"error": "文件不存在"})
+                try:
+                    content = data.decode("utf-8")
+                except UnicodeDecodeError:
+                    return self.send_json(400, {"error": "文件不是纯文本，无法在线编辑"})
+                return self.send_json(200, {"content": content, "size": len(data),
+                                            "filename": row["filename"]})
             if path == "/api/optimize-requests":
                 with DB_LOCK, db() as c:
                     rows = [dict(r) for r in c.execute(
@@ -1091,7 +1173,7 @@ class Handler(BaseHTTPRequestHandler):
                 row = get_bot(bot_id)
                 if not row:
                     return self.send_json(404, {"error": "Bot 不存在"})
-                snap = (row["last_error"] or "")[:300]
+                snap = (row.get("error_sig") or row["last_error"] or "")[:300]
                 if row.get("missing_module"):
                     snap = (snap + f" | 疑似缺库: {row['missing_module']} -> pip install "
                             f"{row.get('missing_package') or row['missing_module']}")[:300]
@@ -1110,6 +1192,45 @@ class Handler(BaseHTTPRequestHandler):
                       f"request#{rid} status={row['status']} err={snap[:120]}")
                 return self.send_json(201, {"ok": True, "requestId": rid,
                                              "message": "优化请求已提交，小梨会读取代码与日志后处理"})
+            m = re.fullmatch(r"/api/bots/([0-9a-f]+)/file", path)
+            if m:
+                bot_id = m.group(1)
+                row = get_bot(bot_id)
+                if not row:
+                    return self.send_json(404, {"error": "Bot 不存在"})
+                data = self.read_json()
+                content = data.get("content")
+                if not isinstance(content, str):
+                    return self.send_json(400, {"error": "content 必须是文本"})
+                raw = content.encode("utf-8")
+                if b"\x00" in raw:
+                    return self.send_json(400, {"error": "文件含 NUL 字节，拒绝保存"})
+                if len(raw) > 10 * 1024 * 1024:
+                    return self.send_json(400, {"error": "文件超过 10MB 上限"})
+                findings = scan_code(content)
+                high = [f for f in findings if f["severity"] == "high"]
+                if high and not data.get("confirmRisk"):
+                    return self.send_json(422, {"error": "新代码扫到高风险调用，确认后才能保存",
+                                                "findings": findings})
+                script = bot_script(row)
+                script.parent.mkdir(parents=True, exist_ok=True)
+                script.write_bytes(raw)
+                update_bot(bot_id, file_blob=raw, size=len(raw),
+                           sha256=hashlib.sha256(raw).hexdigest())
+                audit(u["username"], "edit_file", row["name"],
+                      f"{row['filename']} {len(raw)}B risks={len(findings)}")
+                restarted = False
+                if row["status"] == "running" and data.get("restart"):
+                    try:
+                        stop_bot(bot_id, u["username"])
+                        start_bot(bot_id, u["username"])
+                        restarted = True
+                    except Exception as e:
+                        return self.send_json(200, {"ok": True, "restarted": False,
+                                                    "warn": f"已保存，但重启失败：{e}"})
+                return self.send_json(200, {"ok": True, "restarted": restarted,
+                                            "size": len(raw),
+                                            "message": "已保存并重启" if restarted else "已保存"})
             m = re.fullmatch(r"/api/optimize-requests/(\d+)/resolve", path)
             if m:
                 data = self.read_json()

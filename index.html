@@ -186,6 +186,10 @@ tbody tr:hover{background:var(--hover)}
 .chart .cy{fill:var(--ink2);font-size:11px}
 .chart-h{display:flex;align-items:baseline;gap:10px;margin-bottom:2px}
 .chart-h b{font-size:13.5px}
+.err-card{border:1px solid var(--line2);border-left:3px solid var(--red);background:var(--field);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.err-card pre{white-space:pre-wrap;word-break:break-all;font-size:12px;line-height:1.55;margin:0;max-height:220px;overflow:auto;font-family:ui-monospace,Menlo,Consolas,monospace}
+.err-card .row{display:flex;gap:8px;flex-wrap:wrap}
+.code-editor{width:100%;box-sizing:border-box;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.55;background:var(--field);color:var(--ink);border:1px solid var(--line2);border-radius:10px;padding:10px;resize:vertical;tab-size:2}
 .mini-meter{width:74px;height:5px;border-radius:99px;background:var(--field);overflow:hidden;margin-top:5px}
 .mini-meter i{display:block;height:100%;background:var(--blue);border-radius:99px;transition:width .8s var(--ease)}
 .empty{padding:52px 20px;text-align:center;color:var(--ink2)}
@@ -422,8 +426,17 @@ tbody tr:hover{background:var(--hover)}
     <dl class="kv2" id="dKv"></dl>
     <div class="d-sec">运行统计（长按看精确数值）</div>
     <div class="bars" id="dBars"></div>
+    <div class="d-sec" id="dErrSec" style="display:none">最后一次报错</div>
+    <div id="dErrCard" style="display:none"></div>
     <div class="d-sec">安全扫描</div>
     <div id="dScan"></div>
+    <div class="d-sec">代码编辑（网页端改完直接上传保存）</div>
+    <textarea id="dCode" class="code-editor" rows="16" spellcheck="false" placeholder="点开 Bot 详情时自动载入当前代码，改完点保存"></textarea>
+    <div class="d-actions" style="margin-top:8px">
+      <button class="btn btn-default" id="dCodeSave">保存代码</button>
+      <button class="btn btn-primary" id="dCodeSaveRestart">保存并重启</button>
+      <span class="dim" id="dCodeNote"></span>
+    </div>
     <div class="d-sec">最新日志</div>
     <div class="terminal" id="dLog"></div>
   </div>
@@ -484,11 +497,21 @@ const $$ = s => [...document.querySelectorAll(s)];
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 let API_BASE = localStorage.getItem("bot-host-api-base") || "";
 let me = null, bots = [], hostInfo = null, curView = "overview";
-let botFilter = "all", botKeyword = "", logBotId = "", logAuto = true, drawerBotId = null;
+let botFilter = "all", botKeyword = "", logBotId = "", logAuto = true, drawerBotId = null, editorBotId = null;
 
 function apiUrl(p){ return API_BASE.replace(/\/$/,"") + p; }
 async function api(path, opts={}){
-  const r = await fetch(apiUrl(path), {credentials:"include", headers:{"Content-Type":"application/json", ...(opts.headers||{})}, ...opts});
+  let r = null, lastErr = null;
+  for(let attempt = 0; attempt < 3; attempt++){
+    try{
+      r = await fetch(apiUrl(path), {credentials:"include", headers:{"Content-Type":"application/json", ...(opts.headers||{})}, ...opts});
+      break;
+    }catch(e){
+      lastErr = e;
+      if(attempt < 2) await new Promise(res => setTimeout(res, 600 * (attempt + 1)));
+    }
+  }
+  if(!r) throw lastErr || new Error("网络连接失败");
   let data = {};
   try{ data = await r.json(); }catch(e){}
   if(!r.ok) throw Object.assign(new Error(data.error || ("请求失败 "+r.status)), {status:r.status, data});
@@ -781,7 +804,7 @@ function renderBots(){
     const memPct = bot.status==="running" && bot.memLimit ? Math.min(100, Math.round(bot.memMB/bot.memLimit*100)) : 0;
     tr.innerHTML = `
       <td><div class="bot-name"></div><div class="bot-file"></div></td>
-      <td>${badge(bot.status)}${bot.lastError && bot.status!=="running" ? `<div class="dim" style="margin-top:4px;max-width:220px">${esc(bot.lastError)}</div>`:""}${bot.missingModule ? `<div style="margin-top:5px;font-size:12.5px;color:var(--amber);font-weight:650">疑似缺库：${esc(bot.missingModule)}<br><span class="dim">对应 pip 包 ${esc(bot.missingPackage||bot.missingModule)} · 点 AI 优化处理</span></div>`:""}</td>
+      <td>${badge(bot.status)}${bot.lastError && bot.status!=="running" ? `<div class="dim" style="margin-top:4px;max-width:220px">${esc(bot.lastError)}${bot.errorRepeat>1?` · 已重复 ${bot.errorRepeat} 次`:""}</div>`:""}${bot.missingModule ? `<div style="margin-top:5px;font-size:12.5px;color:var(--amber);font-weight:650">疑似缺库：${esc(bot.missingModule)}<br><span class="dim">对应 pip 包 ${esc(bot.missingPackage||bot.missingModule)} · 点 AI 优化处理</span></div>`:""}</td>
       <td class="dim">${bot.status==="running" ? (bot.manager==="systemd" ? "systemd · PID "+(bot.pid||"—") : "进程 · PID "+(bot.pid||"—")) : "—"}</td>
       <td><span class="num-cell">${bot.status==="running" ? bot.cpuPercent+"%" : "—"}</span><div class="mini-meter"><i style="width:${bot.status==="running"?Math.min(100,bot.cpuPercent):0}%"></i></div></td>
       <td><span class="num-cell">${bot.status==="running" ? bot.memMB+" MB" : "—"}</span><div class="mini-meter"><i style="width:${memPct}%"></i></div><div class="dim">上限 ${bot.memLimit} MB</div></td>
@@ -842,7 +865,7 @@ function closeLayers(){
   $("#mask").classList.remove("show");
   $("#drawer").classList.remove("show");
   $$(".modal").forEach(m => m.classList.remove("show"));
-  drawerBotId = null;
+  drawerBotId = null; editorBotId = null;
 }
 $("#mask").addEventListener("click", closeLayers);
 $("#closeDrawer").addEventListener("click", closeLayers);
@@ -866,6 +889,30 @@ async function renderDrawer(id, silent=false){
   ];
   $("#dKv").innerHTML = kv.map(([k,v])=>`<dt>${k}</dt><dd>${esc(v)}</dd>`).join("");
   renderDrawerBars(bot);
+  /* 报错卡片：只截取最后一次报错的片段 + 重复次数，下面放复制与上报按钮 */
+  const es = $("#dErrSec"), ec = $("#dErrCard");
+  if(bot.status === "error" && (bot.errorTail || bot.lastError)){
+    es.style.display = ""; ec.style.display = "";
+    const rep = bot.errorRepeat > 1 ? ` · 已重复 ${bot.errorRepeat} 次（自动重启每次都报同一个错）` : "";
+    ec.innerHTML = `<div class="err-card"><b>${esc(bot.errorSig || "报错")}</b>${rep ? `<div class="dim" style="font-size:12px">${esc(rep)}</div>` : ""}<pre>${esc(bot.errorTail || bot.lastError)}</pre><div class="row"><button class="btn btn-default" id="dErrCopy">复制报错</button><button class="btn btn-default" id="dErrReport">上报给 AI 优化</button></div></div>`;
+    $("#dErrCopy").onclick = async ()=>{
+      const txt = (bot.errorSig ? bot.errorSig + "\n" : "") + (bot.errorTail || bot.lastError || "");
+      try{ await navigator.clipboard.writeText(txt); toast("报错已复制"); }
+      catch(e){
+        const ta = document.createElement("textarea"); ta.value = txt; document.body.appendChild(ta);
+        ta.select(); document.execCommand("copy"); ta.remove(); toast("报错已复制");
+      }
+    };
+    $("#dErrReport").onclick = async ()=>{ await botAction(id, "optimize"); renderDrawer(id); };
+  } else { es.style.display = "none"; ec.style.display = "none"; }
+  /* 代码编辑：只在切换 Bot 时载入一次，3 秒静默刷新不覆盖正在敲的字 */
+  if(editorBotId !== id){
+    editorBotId = id;
+    $("#dCodeNote").textContent = "载入中…";
+    api(`/api/bots/${id}/file`).then(r=>{
+      if(editorBotId === id){ $("#dCode").value = r.content; $("#dCodeNote").textContent = `${r.filename} · ${r.size} 字节`; }
+    }).catch(e=>{ if(editorBotId === id) $("#dCodeNote").textContent = "载入失败：" + e.message; });
+  }
   const acts = $("#dActions"); acts.innerHTML = "";
   const mk = (label, cls, fn)=>{
     const b = document.createElement("button"); b.className = "btn "+cls; b.textContent = label;
@@ -899,6 +946,32 @@ async function renderDrawer(id, silent=false){
     }catch(e){ $("#dLog").textContent = "日志加载失败：" + e.message; }
   }
 }
+
+/* ---------- 代码编辑：网页端改完直接上传保存 ---------- */
+async function saveCode(restart){
+  if(!drawerBotId) return;
+  const content = $("#dCode").value;
+  const post = async (confirmRisk)=>{
+    return api(`/api/bots/${drawerBotId}/file`, {method:"POST",
+      body: JSON.stringify({content, restart, confirmRisk})});
+  };
+  try{
+    const r = await post(false);
+    toast(r.message || "已保存");
+    renderDrawer(drawerBotId);
+  }catch(e){
+    if(e.status === 422 && e.data && e.data.findings){
+      const highs = e.data.findings.filter(f=>f.severity==="high")
+        .map(f=>`${f.label}（第 ${f.line} 行）`).join("、");
+      if(confirm("新代码扫到高风险调用：" + highs + "\n确定要保存吗？")){
+        try{ const r = await post(true); toast(r.message || "已保存"); renderDrawer(drawerBotId); }
+        catch(e2){ toast("保存失败：" + e2.message, "err"); }
+      }
+    } else toast("保存失败：" + e.message, "err");
+  }
+}
+$("#dCodeSave").addEventListener("click", ()=>saveCode(false));
+$("#dCodeSaveRestart").addEventListener("click", ()=>saveCode(true));
 
 /* ---------- 日志视图 ---------- */
 function renderLogBots(){
